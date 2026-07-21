@@ -371,6 +371,36 @@ func (h *KnowledgeHandler) CreateKnowledgeFromFile(c *gin.Context) {
 		}
 		logger.Infof(ctx, "Received file metadata: %s", secutils.SanitizeForLog(fmt.Sprintf("%v", metadata)))
 	}
+	// Management-plane uploads use a content-derived idempotency key. Resolve
+	// replays before storing another original object or enqueueing parse work.
+	if idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key")); idempotencyKey != "" {
+		if len(idempotencyKey) > 255 {
+			c.Error(errors.NewBadRequestError("Idempotency-Key is too long"))
+			return
+		}
+		if metadata == nil {
+			metadata = make(map[string]string)
+		}
+		metadata["datasource_id"] = ""
+		metadata["external_id"] = "manual:" + idempotencyKey
+		existing, findErr := h.kgService.GetRepository().FindByMetadata(
+			ctx,
+			effectiveTenantID,
+			kbID,
+			map[string]string{
+				"datasource_id": "",
+				"external_id":   metadata["external_id"],
+			},
+		)
+		if findErr != nil {
+			c.Error(errors.NewInternalServerError(findErr.Error()))
+			return
+		}
+		if existing != nil {
+			c.JSON(http.StatusOK, gin.H{"success": true, "data": existing, "idempotent_replay": true})
+			return
+		}
+	}
 
 	enableMultimodelForm := c.PostForm("enable_multimodel")
 	var enableMultimodel *bool

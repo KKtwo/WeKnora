@@ -133,6 +133,8 @@ type SearchResult struct {
 	Content string `gorm:"column:content"         json:"content"`
 	// Knowledge ID
 	KnowledgeID string `gorm:"column:knowledge_id"    json:"knowledge_id"`
+	// DocumentID is the stable logical ID. KnowledgeID remains the engine ID.
+	DocumentID string `json:"document_id"`
 	// Chunk index
 	ChunkIndex int `gorm:"column:chunk_index"     json:"chunk_index"`
 	// Knowledge title
@@ -182,6 +184,11 @@ type SearchResult struct {
 
 	// KnowledgeBaseID is the ID of the knowledge base this result belongs to
 	KnowledgeBaseID string `json:"knowledge_base_id,omitempty"`
+	// Source fields are copied from normalized ingestion metadata.
+	SourceURL       string `json:"source_url,omitempty"`
+	SourceRevision  string `json:"source_revision,omitempty"`
+	SourceUpdatedAt string `json:"source_updated_at,omitempty"`
+	DataSourceType  string `json:"datasource_type,omitempty"`
 }
 
 // SearchParams represents the search parameters

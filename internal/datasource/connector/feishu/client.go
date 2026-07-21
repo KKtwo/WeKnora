@@ -19,6 +19,7 @@ import (
 
 // Client wraps the Feishu Open Platform API for document/wiki operations.
 type Client struct {
+	config    *Config
 	baseURL   string
 	appID     string
 	appSecret string
@@ -54,6 +55,7 @@ func (e *partialWikiNodeListError) Error() string {
 // NewClient creates a new Feishu API client.
 func NewClient(config *Config) *Client {
 	return &Client{
+		config:     config,
 		baseURL:    config.GetBaseURL(),
 		appID:      config.AppID,
 		appSecret:  config.AppSecret,
@@ -104,17 +106,6 @@ func (c *Client) getTenantAccessToken(ctx context.Context) (string, error) {
 	}
 	c.tokenExpAt = time.Now().Add(ttl)
 
-	prefixLen := 8
-	if len(result.TenantAccessToken) < prefixLen {
-		prefixLen = len(result.TenantAccessToken)
-	}
-	suffixLen := 4
-	if len(result.TenantAccessToken) < suffixLen {
-		suffixLen = len(result.TenantAccessToken)
-	}
-	logger.Infof(ctx, "[Feishu] got tenant_access_token: %s...%s expire=%ds",
-		result.TenantAccessToken[:prefixLen], result.TenantAccessToken[len(result.TenantAccessToken)-suffixLen:], result.Expire)
-
 	return c.tokenCache, nil
 }
 
@@ -142,7 +133,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 	)
 	backoff := feishuRetryBackoff
 
-	token, err := c.getTenantAccessToken(ctx)
+	token, err := c.getAccessToken(ctx)
 	if err != nil {
 		return err
 	}
@@ -510,9 +501,9 @@ func (c *Client) GetDocumentRawContent(ctx context.Context, documentID string) (
 	return resp.Data.Content, nil
 }
 
-// Ping verifies the credentials by attempting to get a tenant access token.
+// Ping verifies the configured enterprise or personal identity.
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := c.getTenantAccessToken(ctx)
+	_, err := c.getAccessToken(ctx)
 	return err
 }
 
@@ -652,7 +643,7 @@ func (c *Client) DownloadDriveFile(ctx context.Context, fileToken string) ([]byt
 
 // downloadRawBytes performs an authenticated GET and returns the raw response body.
 func (c *Client) downloadRawBytes(ctx context.Context, path string) ([]byte, error) {
-	token, err := c.getTenantAccessToken(ctx)
+	token, err := c.getAccessToken(ctx)
 	if err != nil {
 		return nil, err
 	}

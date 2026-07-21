@@ -187,3 +187,75 @@ func TestAllFetchedItemsFailedErrorTruncatesLongDetail(t *testing.T) {
 	assert.LessOrEqual(t, len(err.Error()), 560)
 	assert.Contains(t, err.Error(), "...")
 }
+
+func TestDeleteFetchedItemUsesCompositeIdentityAndDeletesKnowledge(t *testing.T) {
+	repo := &metadataKnowledgeRepo{
+		result: &types.Knowledge{ID: "knowledge-b"},
+	}
+	knowledgeService := &datasourceKnowledgeService{repo: repo}
+	svc := &DataSourceService{knowledgeService: knowledgeService}
+	ds := &types.DataSource{
+		ID:              "source-b",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+	}
+
+	deleted, err := svc.deleteFetchedItem(context.Background(), ds, "docs/readme.md")
+
+	require.NoError(t, err)
+	require.True(t, deleted)
+	require.Equal(t, []string{"knowledge-b"}, knowledgeService.deletedIDs)
+	require.Equal(t, map[string]string{
+		"datasource_id": "source-b",
+		"external_id":   "docs/readme.md",
+	}, repo.filters)
+}
+
+func TestDeleteFetchedItemDoesNotDeleteAnotherDataSourceDocument(t *testing.T) {
+	repo := &metadataKnowledgeRepo{}
+	knowledgeService := &datasourceKnowledgeService{repo: repo}
+	svc := &DataSourceService{knowledgeService: knowledgeService}
+	ds := &types.DataSource{
+		ID:              "source-b",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+	}
+
+	deleted, err := svc.deleteFetchedItem(context.Background(), ds, "docs/readme.md")
+
+	require.NoError(t, err)
+	require.False(t, deleted)
+	require.Empty(t, knowledgeService.deletedIDs)
+}
+
+type metadataKnowledgeRepo struct {
+	interfaces.KnowledgeRepository
+	result  *types.Knowledge
+	err     error
+	filters map[string]string
+}
+
+func (r *metadataKnowledgeRepo) FindByMetadata(
+	_ context.Context,
+	_ uint64,
+	_ string,
+	filters map[string]string,
+) (*types.Knowledge, error) {
+	r.filters = filters
+	return r.result, r.err
+}
+
+type datasourceKnowledgeService struct {
+	interfaces.KnowledgeService
+	repo       interfaces.KnowledgeRepository
+	deletedIDs []string
+}
+
+func (s *datasourceKnowledgeService) GetRepository() interfaces.KnowledgeRepository {
+	return s.repo
+}
+
+func (s *datasourceKnowledgeService) DeleteKnowledge(_ context.Context, id string) error {
+	s.deletedIDs = append(s.deletedIDs, id)
+	return nil
+}

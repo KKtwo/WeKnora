@@ -49,6 +49,20 @@ func (r *DataSourceRepository) FindByID(ctx context.Context, id string) (*types.
 	return &ds, nil
 }
 
+// FindByExternalRef resolves a management-plane idempotency key within a
+// tenant. knowledgeBaseID is included to reject accidental cross-KB reuse.
+func (r *DataSourceRepository) FindByExternalRef(
+	ctx context.Context, tenantID uint64, knowledgeBaseID, externalRef string,
+) (*types.DataSource, error) {
+	var ds types.DataSource
+	if err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND external_ref = ?", tenantID, knowledgeBaseID, externalRef).
+		Where("deleted_at IS NULL").First(&ds).Error; err != nil {
+		return nil, err
+	}
+	return &ds, nil
+}
+
 // FindByKnowledgeBase lists all data sources for a knowledge base
 func (r *DataSourceRepository) FindByKnowledgeBase(ctx context.Context, kbID string) ([]*types.DataSource, error) {
 	if kbID == "" {
@@ -79,6 +93,21 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 		return err
 	}
 	return nil
+}
+
+// UpdateConfig persists only the encrypted connector configuration. OAuth
+// refresh uses this narrow write so it cannot overwrite concurrent sync state.
+func (r *DataSourceRepository) UpdateConfig(ctx context.Context, id string, config types.JSON) error {
+	if id == "" {
+		return errors.New("data source id is empty")
+	}
+	return r.db.WithContext(ctx).
+		Model(&types.DataSource{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"config":     config,
+			"updated_at": time.Now().UTC(),
+		}).Error
 }
 
 // UpdateSyncState updates only fields managed by sync execution. GORM's

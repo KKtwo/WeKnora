@@ -185,7 +185,7 @@
             </div>
             <!-- 我的知识库卡片 -->
             <div v-if="kb.isMine" v-show="!isKbSectionCollapsed(kbSectionOf(kb))" class="kb-card" :class="{
-              'uninitialized': !isInitialized(kb),
+              'uninitialized': requiresKnowledgeBaseInitialization(kb),
               'kb-type-document': (kb.type || 'document') === 'document',
               'kb-type-faq': kb.type === 'faq',
               'highlight-flash': highlightedKbId !== null && highlightedKbId === kb.id
@@ -422,7 +422,7 @@
                 :name="isKbSectionCollapsed('tenantOthers') ? 'chevron-right' : 'chevron-down'" size="14px" />
             </div>
             <div v-show="!isKbSectionCollapsed(kbSectionOf(kb))" class="kb-card" :class="{
-              'uninitialized': !isInitialized(kb),
+              'uninitialized': requiresKnowledgeBaseInitialization(kb),
               'kb-type-document': (kb.type || 'document') === 'document',
               'kb-type-faq': kb.type === 'faq',
               'highlight-flash': highlightedKbId !== null && highlightedKbId === kb.id
@@ -803,6 +803,7 @@ import { useTenantModelReadiness } from '@/composables/useTenantModelReadiness'
 import { useI18n } from 'vue-i18n'
 import { useListUrlState } from '@/composables/useListUrlState'
 import { useResourcePins } from '@/composables/useResourcePins'
+import { requiresKnowledgeBaseInitialization } from './kbInitialization'
 
 const router = useRouter()
 const route = useRoute()
@@ -848,6 +849,8 @@ interface KB {
   pinned_at?: string;
   embedding_model_id?: string;
   summary_model_id?: string;
+  external_ref?: string;
+  indexing_strategy?: { vector_enabled?: boolean; keyword_enabled?: boolean };
   type?: 'document' | 'faq';
   showMore?: boolean;
   vlm_config?: { enabled?: boolean; model_id?: string };
@@ -1549,22 +1552,12 @@ const confirmDelete = () => {
   })
 }
 
-const isInitialized = (kb: KB) => {
-  // LLM (summary) model is always required
-  if (!kb.summary_model_id || kb.summary_model_id === '') return false
-  // Embedding model only required when RAG indexing is enabled (vector or keyword)
-  const strategy = (kb as any).indexing_strategy
-  const needsEmbedding = !strategy || strategy.vector_enabled || strategy.keyword_enabled
-  if (needsEmbedding && (!kb.embedding_model_id || kb.embedding_model_id === '')) return false
-  return true
-}
-
 const isWikiKb = (kb: unknown) =>
   !!(kb as { indexing_strategy?: { wiki_enabled?: boolean } } | null | undefined)?.indexing_strategy?.wiki_enabled
 
 // 计算是否有未初始化的知识库
 const hasUninitializedKbs = computed(() => {
-  return kbs.value.some(kb => !isInitialized(kb))
+  return kbs.value.some(requiresKnowledgeBaseInitialization)
 })
 
 const getKbDisplayName = (kbId: string) => {
@@ -1666,7 +1659,7 @@ const handleCardClick = (kb: KB) => {
   // Track this open in the per-user "recent" list before navigating —
   // matches the user mental model "this is what I last worked on".
   pins.touchRecent('kb', kb.id)
-  if (isInitialized(kb)) {
+  if (!requiresKnowledgeBaseInitialization(kb)) {
     goDetail(kb.id)
   } else {
     goSettings(kb.id)

@@ -285,11 +285,14 @@ func (s *modelService) UpdateModelCredentials(
 	}
 
 	changed := false
-	if apiKey != nil && *apiKey != "" && *apiKey != existing.Parameters.APIKey {
+	// Persist every explicitly supplied non-empty credential, even when its
+	// plaintext matches the loaded value. This rewrites legacy plaintext rows
+	// through ModelParameters.Value after SYSTEM_AES_KEY is enabled.
+	if apiKey != nil && *apiKey != "" {
 		existing.Parameters.APIKey = *apiKey
 		changed = true
 	}
-	if appSecret != nil && *appSecret != "" && *appSecret != existing.Parameters.AppSecret {
+	if appSecret != nil && *appSecret != "" {
 		existing.Parameters.AppSecret = *appSecret
 		changed = true
 	}

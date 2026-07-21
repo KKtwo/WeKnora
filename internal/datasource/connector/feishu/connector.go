@@ -802,8 +802,17 @@ func parseFeishuConfig(config *types.DataSourceConfig, region Region) (*Config, 
 		return nil, fmt.Errorf("parse %s credentials: %w", region.ConnectorType, err)
 	}
 
+	if feishuConfig.AuthMode == "" {
+		feishuConfig.AuthMode = AuthModeTenant
+	}
 	if feishuConfig.AppID == "" || feishuConfig.AppSecret == "" {
 		return nil, fmt.Errorf("%s app_id and app_secret are required", region.ConnectorType)
+	}
+	if feishuConfig.AuthMode != AuthModeTenant && feishuConfig.AuthMode != AuthModeUserOAuth {
+		return nil, fmt.Errorf("unsupported feishu auth_mode: %s", feishuConfig.AuthMode)
+	}
+	if feishuConfig.AuthMode == AuthModeUserOAuth && feishuConfig.AccessToken == "" && feishuConfig.RefreshToken == "" {
+		return nil, fmt.Errorf("feishu personal OAuth token is required")
 	}
 
 	if feishuConfig.BaseURL == "" {
@@ -813,6 +822,7 @@ func parseFeishuConfig(config *types.DataSourceConfig, region Region) (*Config, 
 	if err := datasource.ValidateConnectorBaseURL(feishuConfig.GetBaseURL()); err != nil {
 		return nil, err
 	}
+	feishuConfig.credentials = config.Credentials
 
 	return &feishuConfig, nil
 }

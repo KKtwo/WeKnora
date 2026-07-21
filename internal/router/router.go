@@ -462,6 +462,8 @@ func RegisterKnowledgeBaseRoutes(r *gin.RouterGroup, handler *handler.KnowledgeB
 		kb.GET("", g.Viewer(), handler.ListKnowledgeBases)
 		// 获取知识库详情 — Viewer+ 且对 KB 有 read 权限
 		kb.GET("/:id", g.Viewer(), g.KBAccessRead("id"), handler.GetKnowledgeBase)
+		kb.GET("/:id/readiness", g.Viewer(), g.KBAccessRead("id"), handler.GetKnowledgeBaseReadiness)
+		kb.GET("/:id/documents/:document_id", g.Viewer(), g.KBAccessRead("id"), handler.GetDocument)
 		// 更新/删除知识库 — 两层正交鉴权，缺一不可：
 		//   OwnedKBOrAdmin  管「租户内」归属：非创建者的 Contributor 改不了
 		//                   同事的 KB（跨租户 KB 在此走 lookup=NotFound → 交给
@@ -2295,6 +2297,8 @@ func RegisterDataSourceRoutes(
 
 		// Validate credentials without persistence (for "Test Connection" button) — Admin+
 		ds.POST("/validate-credentials", g.Admin(), handler.ValidateCredentials)
+		ds.POST("/oauth/authorize-url", g.Admin(), handler.BuildOAuthAuthorizationURL)
+		ds.POST("/oauth/token", g.Admin(), handler.ExchangeOAuthCode)
 
 		// CRUD operations
 		ds.POST("", g.Admin(), handler.CreateDataSource)

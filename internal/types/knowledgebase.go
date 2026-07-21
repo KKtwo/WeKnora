@@ -59,6 +59,9 @@ const (
 type KnowledgeBase struct {
 	// Unique identifier of the knowledge base
 	ID string `yaml:"id"                      json:"id"                      gorm:"type:varchar(36);primaryKey"`
+	// ExternalRef is an idempotency key owned by an integrating system.
+	// It is unique within a tenant and immutable after creation.
+	ExternalRef string `yaml:"external_ref"            json:"external_ref"            gorm:"type:varchar(255);default:'';<-:create"`
 	// Name of the knowledge base
 	Name string `yaml:"name"                    json:"name"`
 	// Type of the knowledge base (document, faq, etc.)

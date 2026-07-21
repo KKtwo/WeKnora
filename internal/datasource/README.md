@@ -2,7 +2,9 @@
 
 ## Overview
 
-The data source sync framework enables WeKnora to automatically import and synchronize content from external platforms (Feishu, Notion, Confluence, etc.) into knowledge bases. This is the foundational layer upon which all specific connectors are built.
+The data source sync framework enables WeKnora to automatically import and synchronize content from external platforms and generic Git repositories into knowledge bases. This is the foundational layer upon which all specific connectors are built.
+
+Personal OAuth is supported for Feishu and DingTalk. The management plane obtains a signed browser `state`, exchanges the callback code through `/api/v1/datasource/oauth/token`, and immediately persists the returned credential map through the encrypted data-source write path. Refresh-token rotation is written back before a sync run completes. DingTalk content is read through its official document, sheet, AI table and drive MCP gateways; incremental cursors store content hashes and emit deletion items for resources that disappear.
 
 ## Architecture
 
@@ -61,6 +63,26 @@ Manual Trigger or Scheduled Job (cron)
         ↓
   Documents parsed → chunks → vectors → indexed
 ```
+
+Knowledge created by a connector is identified by the composite
+`(tenant_id, knowledge_base_id, datasource_id, external_id)`. Incremental
+updates and deletions must use the complete identity so two data sources can
+reuse the same external ID without overwriting or deleting each other's data.
+
+## Generic Git Connector
+
+The `git` connector supports HTTPS, SSH URL, and SCP-style repositories. It
+uses a shallow, blob-filtered clone and stores the current path-to-blob map in
+the sync cursor, so later runs emit only created, changed, and deleted files.
+
+- Non-secret settings: `repo_url`, `branch`, optional `path`,
+  `include_extensions`, `max_file_bytes`.
+- Optional latest-version selection: set both `latest_parent` and
+  `latest_pattern` (for example `versions` and `version-*`).
+- HTTPS credentials: optional `username` and `token`.
+- SSH credentials: optional `private_key`; verified `known_hosts` is required.
+- Local paths, `file://`, plain HTTP, unsafe refs, and repository path traversal
+  are rejected.
 
 ## File Structure
 
@@ -156,6 +178,8 @@ GET    /api/v1/datasource/logs/:log_id      # Get specific log
 ### Metadata
 ```
 GET    /api/v1/datasource/types             # Available connectors
+POST   /api/v1/datasource/oauth/authorize-url # Build Feishu/DingTalk consent URL
+POST   /api/v1/datasource/oauth/token         # Exchange code (management plane only)
 ```
 
 ## Implementation Guide

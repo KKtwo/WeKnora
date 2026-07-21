@@ -609,6 +609,14 @@ func (s *knowledgeService) UpdateKnowledge(ctx context.Context, knowledge *types
 	if knowledge.Description != "" {
 		record.Description = knowledge.Description
 	}
+	// Connector ingestion uses these internal fields to preserve the logical
+	// document identity and normalized source metadata across URL replacements.
+	if knowledge.DocumentID != "" {
+		record.DocumentID = knowledge.DocumentID
+	}
+	if len(knowledge.Metadata) > 0 {
+		record.Metadata = knowledge.Metadata
+	}
 
 	// Update knowledge record in the repository
 	if err := s.repo.UpdateKnowledge(ctx, record); err != nil {

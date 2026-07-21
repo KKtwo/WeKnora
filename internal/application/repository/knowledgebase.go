@@ -51,6 +51,36 @@ func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDAndTenant(ctx context.Cont
 	return &kb, nil
 }
 
+// GetKnowledgeBaseByExternalRef resolves an integration-owned idempotency key
+// within a tenant. It intentionally remains a concrete repository extension so
+// existing lightweight service fakes do not need to implement integration APIs.
+func (r *knowledgeBaseRepository) GetKnowledgeBaseByExternalRef(
+	ctx context.Context, tenantID uint64, externalRef string,
+) (*types.KnowledgeBase, error) {
+	var kb types.KnowledgeBase
+	if err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND external_ref = ?", tenantID, externalRef).
+		First(&kb).Error; err != nil {
+		return nil, err
+	}
+	return &kb, nil
+}
+
+// ResolveCurrentKnowledgeIDs maps stable logical documents to their current
+// engine resources, scoped by tenant and the explicitly authorized KB list.
+func (r *knowledgeBaseRepository) ResolveCurrentKnowledgeIDs(
+	ctx context.Context, tenantID uint64, kbIDs, documentIDs []string,
+) ([]string, error) {
+	if len(kbIDs) == 0 || len(documentIDs) == 0 {
+		return []string{}, nil
+	}
+	var ids []string
+	err := r.db.WithContext(ctx).Model(&types.Document{}).
+		Where("tenant_id = ? AND knowledge_base_id IN ? AND id IN ?", tenantID, kbIDs, documentIDs).
+		Where("deleted_at IS NULL").Pluck("current_knowledge_id", &ids).Error
+	return ids, err
+}
+
 // GetKnowledgeBaseByIDs gets knowledge bases by multiple ids
 func (r *knowledgeBaseRepository) GetKnowledgeBaseByIDs(ctx context.Context, ids []string) ([]*types.KnowledgeBase, error) {
 	if len(ids) == 0 {

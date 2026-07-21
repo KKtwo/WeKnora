@@ -19,6 +19,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 )
 
 // DataSourceService implements the DataSourceService interface
@@ -75,6 +76,20 @@ func (s *DataSourceService) CreateDataSource(ctx context.Context, ds *types.Data
 	}
 	if kb.TenantID != ds.TenantID {
 		return nil, datasource.ErrKnowledgeBaseNotFound
+	}
+	ds.ExternalRef = strings.TrimSpace(ds.ExternalRef)
+	if ds.ExternalRef != "" {
+		if repo, ok := s.dsRepo.(interface {
+			FindByExternalRef(context.Context, uint64, string, string) (*types.DataSource, error)
+		}); ok {
+			existing, findErr := repo.FindByExternalRef(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ExternalRef)
+			if findErr == nil {
+				return existing, nil
+			}
+			if !errors.Is(findErr, gorm.ErrRecordNotFound) {
+				return nil, findErr
+			}
+		}
 	}
 
 	// Validate connector type
@@ -364,6 +379,7 @@ func (s *DataSourceService) ValidateConnection(ctx context.Context, dsID string)
 	if err != nil {
 		return datasource.ErrInvalidConfig
 	}
+	credentialsBeforeValidation := credentialSnapshot(config)
 
 	// Validate connection
 	if err := connector.Validate(ctx, config); err != nil {
@@ -371,6 +387,9 @@ func (s *DataSourceService) ValidateConnection(ctx context.Context, dsID string)
 		ds.Status = types.DataSourceStatusError
 		ds.ErrorMessage = err.Error()
 		_ = s.dsRepo.Update(ctx, ds)
+		return err
+	}
+	if err := s.persistRotatedCredentials(ctx, ds, config, credentialsBeforeValidation); err != nil {
 		return err
 	}
 
@@ -658,6 +677,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		_ = s.dsRepo.Update(ctx, ds)
 		return err
 	}
+	credentialsBeforeFetch := credentialSnapshot(config)
 
 	// Streaming path: connectors that support it interleave fetch→ingest→
 	// checkpoint so a large sync bounds memory and resumes after a timeout
@@ -680,6 +700,13 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		cursor, _ := ds.ParseSyncCursor()
 		items, nextCursor, fetchErr = connector.FetchIncremental(ctx, config, cursor)
 		logger.Infof(ctx, "incremental sync fetched %d items", len(items))
+	}
+	if persistErr := s.persistRotatedCredentials(ctx, ds, config, credentialsBeforeFetch); persistErr != nil {
+		if fetchErr == nil {
+			fetchErr = persistErr
+		} else {
+			logger.Errorf(ctx, "failed to persist rotated OAuth credentials: %v", persistErr)
+		}
 	}
 
 	var fetchWarnings []string
@@ -1137,6 +1164,45 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 	return connector.Validate(ctx, config)
 }
 
+func (s *DataSourceService) findSyncedKnowledge(
+	ctx context.Context,
+	ds *types.DataSource,
+	externalID string,
+) (*types.Knowledge, error) {
+	if ds == nil || externalID == "" {
+		return nil, nil
+	}
+	return s.knowledgeService.GetRepository().FindByMetadata(
+		ctx,
+		ds.TenantID,
+		ds.KnowledgeBaseID,
+		map[string]string{
+			"datasource_id": ds.ID,
+			"external_id":   externalID,
+		},
+	)
+}
+
+// deleteFetchedItem removes only the document owned by this data source.
+// external_id alone is not unique when multiple connectors feed one KB.
+func (s *DataSourceService) deleteFetchedItem(
+	ctx context.Context,
+	ds *types.DataSource,
+	externalID string,
+) (bool, error) {
+	existing, err := s.findSyncedKnowledge(ctx, ds, externalID)
+	if err != nil {
+		return false, err
+	}
+	if existing == nil {
+		return false, nil
+	}
+	if err := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ingestItem writes a single FetchedItem into the knowledge base.
 // If a knowledge item with the same external_id already exists, it is deleted first (update = delete + re-create).
 //
@@ -1152,20 +1218,37 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 		"external_id":        item.ExternalID,
 		"source_resource_id": item.SourceResourceID,
 		"datasource_id":      ds.ID,
+		"datasource_type":    ds.Type,
+		"source_url":         item.URL,
 	}
 	for k, v := range item.Metadata {
 		metadata[k] = v
 	}
+	// Normalize connector-specific aliases into the source contract consumed by
+	// CIS. Connectors can provide the canonical keys directly when available.
+	if metadata["source_revision"] == "" {
+		metadata["source_revision"] = firstNonEmpty(metadata["revision"], metadata["commit_sha"], metadata["etag"])
+	}
+	if metadata["source_updated_at"] == "" {
+		metadata["source_updated_at"] = firstNonEmpty(metadata["updated_at"], metadata["modified_at"])
+	}
 
-	// Check if a knowledge item with this external_id already exists → delete it first (update)
+	// Check if this data source already owns the external item → delete it first
+	// (update). Composite lookup prevents another connector in the same KB from
+	// being replaced when it uses the same external_id.
 	isUpdate := false
+	documentID := ""
 	if item.ExternalID != "" {
-		repo := s.knowledgeService.GetRepository()
-		existing, err := repo.FindByMetadataKey(ctx, ds.TenantID, ds.KnowledgeBaseID, "external_id", item.ExternalID)
+		existing, err := s.findSyncedKnowledge(ctx, ds, item.ExternalID)
 		if err != nil {
 			logger.Warnf(ctx, "failed to check existing knowledge for external_id=%s: %v", item.ExternalID, err)
 			// Non-fatal: proceed with creation (may produce duplicate)
 		} else if existing != nil {
+			documentID = existing.DocumentID
+			if documentID == "" {
+				documentID = existing.ID
+			}
+			metadata["document_id"] = documentID
 			logger.Infof(ctx, "found existing knowledge %s for external_id=%s, deleting for update", existing.ID, item.ExternalID)
 			if err := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); err != nil {
 				logger.Warnf(ctx, "failed to delete existing knowledge %s: %v", existing.ID, err)
@@ -1181,7 +1264,7 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 		if err != nil {
 			return isUpdate, fmt.Errorf("build file header: %w", err)
 		}
-		_, err = s.knowledgeService.CreateKnowledgeFromFile(
+		created, err := s.knowledgeService.CreateKnowledgeFromFile(
 			ctx,
 			ds.KnowledgeBaseID,
 			fh,
@@ -1192,12 +1275,19 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 			channel,
 			nil,
 		)
+		if err == nil && created != nil && documentID != "" && created.DocumentID != documentID {
+			created.DocumentID = documentID
+			created.Metadata, err = mergeKnowledgeMetadata(created.Metadata, metadata)
+			if err == nil {
+				err = s.knowledgeService.UpdateKnowledge(ctx, created)
+			}
+		}
 		return isUpdate, err
 	}
 
 	// Case 2: only a remote URL — let WeKnora handle downloading and parsing
 	if item.URL != "" {
-		_, err := s.knowledgeService.CreateKnowledgeFromURL(
+		created, err := s.knowledgeService.CreateKnowledgeFromURL(
 			ctx,
 			ds.KnowledgeBaseID,
 			item.URL,
@@ -1209,10 +1299,43 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 			channel,
 			nil,
 		)
+		if err == nil && created != nil {
+			if documentID != "" {
+				created.DocumentID = documentID
+			}
+			created.Metadata, err = mergeKnowledgeMetadata(created.Metadata, metadata)
+			if err == nil {
+				err = s.knowledgeService.UpdateKnowledge(ctx, created)
+			}
+		}
 		return isUpdate, err
 	}
 
 	return isUpdate, fmt.Errorf("item has neither content nor URL")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func mergeKnowledgeMetadata(current types.JSON, values map[string]string) (types.JSON, error) {
+	merged, err := current.Map()
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range values {
+		merged[key] = value
+	}
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		return nil, err
+	}
+	return types.JSON(encoded), nil
 }
 
 // bytesToFileHeader wraps a []byte into a *multipart.FileHeader so it can be

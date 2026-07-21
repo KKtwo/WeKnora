@@ -41,6 +41,7 @@ CREATE INDEX idx_models_tenant_source_type ON models(tenant_id, source, type);
 
 CREATE TABLE knowledge_bases (
     id VARCHAR(36) PRIMARY KEY,
+    external_ref VARCHAR(255) NOT NULL DEFAULT '',
     name VARCHAR(255) NOT NULL,
     description TEXT,
     tenant_id INT NOT NULL,
@@ -61,6 +62,7 @@ CREATE INDEX idx_knowledge_bases_tenant_name ON knowledge_bases(tenant_id, name)
 
 CREATE TABLE knowledges (
     id VARCHAR(36) PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL,
     tenant_id INT NOT NULL,
     knowledge_base_id VARCHAR(36) NOT NULL,
     type VARCHAR(50) NOT NULL,
@@ -85,6 +87,21 @@ CREATE TABLE knowledges (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE INDEX idx_knowledges_tenant_id ON knowledges(tenant_id, knowledge_base_id);
+
+CREATE TABLE documents (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id INT NOT NULL,
+    knowledge_base_id VARCHAR(36) NOT NULL,
+    datasource_id VARCHAR(36) NOT NULL DEFAULT '',
+    external_key VARCHAR(1024) NOT NULL,
+    current_knowledge_id VARCHAR(36) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL DEFAULT NULL,
+    UNIQUE KEY idx_document_datasource_external_key (datasource_id, external_key(255)),
+    KEY idx_documents_tenant_kb (tenant_id, knowledge_base_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE sessions (
     id VARCHAR(36) PRIMARY KEY,

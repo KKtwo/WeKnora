@@ -2,13 +2,17 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrKnowledgeNotFound = errors.New("knowledge not found")
@@ -50,8 +54,80 @@ func NewKnowledgeRepository(db *gorm.DB) interfaces.KnowledgeRepository {
 
 // CreateKnowledge creates knowledge
 func (r *knowledgeRepository) CreateKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
-	err := r.db.WithContext(ctx).Create(knowledge).Error
-	return err
+	if knowledge == nil {
+		return errors.New("knowledge is nil")
+	}
+	if knowledge.ID == "" {
+		knowledge.ID = uuid.New().String()
+	}
+	metadata, err := knowledge.Metadata.Map()
+	if err != nil {
+		return err
+	}
+	if knowledge.DocumentID == "" {
+		if metadataDocumentID, ok := metadata["document_id"].(string); ok && metadataDocumentID != "" {
+			knowledge.DocumentID = metadataDocumentID
+		} else {
+			knowledge.DocumentID = knowledge.ID
+		}
+	}
+	metadata["document_id"] = knowledge.DocumentID
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	knowledge.Metadata = types.JSON(encoded)
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		datasourceID, _ := metadata["datasource_id"].(string)
+		externalKey, _ := metadata["external_id"].(string)
+		if externalKey == "" {
+			externalKey = knowledge.DocumentID
+		}
+
+		// Resolve concurrent/replayed connector writes to the existing logical
+		// document before persisting the new engine resource.
+		if externalKey != "" {
+			var existing types.Document
+			err := tx.Where("datasource_id = ? AND external_key = ?", datasourceID, externalKey).
+				First(&existing).Error
+			if err == nil {
+				knowledge.DocumentID = existing.ID
+				metadata["document_id"] = existing.ID
+				encoded, marshalErr := json.Marshal(metadata)
+				if marshalErr != nil {
+					return marshalErr
+				}
+				knowledge.Metadata = types.JSON(encoded)
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
+
+		document := &types.Document{
+			ID:                 knowledge.DocumentID,
+			TenantID:           knowledge.TenantID,
+			KnowledgeBaseID:    knowledge.KnowledgeBaseID,
+			DataSourceID:       datasourceID,
+			ExternalKey:        externalKey,
+			CurrentKnowledgeID: knowledge.ID,
+			Status:             knowledge.ParseStatus,
+		}
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).
+			Create(document).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(knowledge).Error; err != nil {
+			return err
+		}
+		return tx.Model(&types.Document{}).
+			Where("id = ?", knowledge.DocumentID).
+			Updates(map[string]interface{}{
+				"current_knowledge_id": knowledge.ID,
+				"status":               knowledge.ParseStatus,
+				"updated_at":           time.Now().UTC(),
+			}).Error
+	})
 }
 
 // GetKnowledgeByID gets knowledge
@@ -188,8 +264,32 @@ func (r *knowledgeRepository) ListPagedKnowledgeByKnowledgeBaseID(
 
 // UpdateKnowledge updates knowledge
 func (r *knowledgeRepository) UpdateKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
-	err := r.db.WithContext(ctx).Omit(omitFieldsOnUpdate...).Save(knowledge).Error
-	return err
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var previousDocumentID string
+		if knowledge.ID != "" {
+			_ = tx.Model(&types.Knowledge{}).Unscoped().Where("id = ?", knowledge.ID).
+				Pluck("document_id", &previousDocumentID).Error
+		}
+		if err := tx.Omit(omitFieldsOnUpdate...).Save(knowledge).Error; err != nil {
+			return err
+		}
+		if knowledge.DocumentID == "" {
+			return nil
+		}
+		if err := tx.Model(&types.Document{}).Where("id = ?", knowledge.DocumentID).
+			Updates(map[string]interface{}{
+				"current_knowledge_id": knowledge.ID,
+				"status":               knowledge.ParseStatus,
+				"updated_at":           time.Now().UTC(),
+			}).Error; err != nil {
+			return err
+		}
+		if previousDocumentID != "" && previousDocumentID != knowledge.DocumentID {
+			return tx.Unscoped().Where("id = ? AND current_knowledge_id = ?", previousDocumentID, knowledge.ID).
+				Delete(&types.Document{}).Error
+		}
+		return nil
+	})
 }
 
 // UpdateKnowledgeBatch updates knowledge items in batch
@@ -202,7 +302,21 @@ func (r *knowledgeRepository) UpdateKnowledgeBatch(ctx context.Context, knowledg
 
 // DeleteKnowledge deletes knowledge
 func (r *knowledgeRepository) DeleteKnowledge(ctx context.Context, tenantID uint64, id string) error {
-	return r.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tenantID, id).Delete(&types.Knowledge{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var knowledge types.Knowledge
+		if err := tx.Select("id", "document_id").Where("tenant_id = ? AND id = ?", tenantID, id).
+			First(&knowledge).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("tenant_id = ? AND id = ?", tenantID, id).Delete(&types.Knowledge{}).Error; err != nil {
+			return err
+		}
+		if knowledge.DocumentID == "" {
+			return nil
+		}
+		return tx.Model(&types.Document{}).Where("id = ? AND current_knowledge_id = ?", knowledge.DocumentID, id).
+			Updates(map[string]interface{}{"status": "deleted", "updated_at": time.Now().UTC()}).Error
+	})
 }
 
 // DeleteKnowledge deletes knowledge
@@ -567,11 +681,39 @@ func (r *knowledgeRepository) FindByMetadataKey(
 	key string,
 	value string,
 ) (*types.Knowledge, error) {
+	return r.FindByMetadata(ctx, tenantID, kbID, map[string]string{key: value})
+}
+
+// FindByMetadata finds a knowledge item whose metadata matches every supplied
+// key-value pair. Sorting keys keeps generated SQL deterministic for tests and
+// query diagnostics.
+func (r *knowledgeRepository) FindByMetadata(
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	filters map[string]string,
+) (*types.Knowledge, error) {
+	if len(filters) == 0 {
+		return nil, nil
+	}
+
 	var knowledge types.Knowledge
-	err := r.db.WithContext(ctx).
-		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", tenantID, kbID).
-		Where("metadata->>? = ?", key, value).
-		First(&knowledge).Error
+	query := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", tenantID, kbID)
+	keys := make([]string, 0, len(filters))
+	for key := range filters {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if r.db.Dialector.Name() == "sqlite" {
+			query = query.Where("json_extract(metadata, ?) = ?", "$."+key, filters[key])
+		} else {
+			query = query.Where("metadata->>? = ?", key, filters[key])
+		}
+	}
+
+	err := query.First(&knowledge).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

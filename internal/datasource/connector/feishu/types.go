@@ -15,6 +15,9 @@ import "time"
 // Config holds Feishu-specific configuration for the data source connector.
 // Uses the self-built app (企业自建应用) authentication model.
 type Config struct {
+	// AuthMode selects enterprise tenant auth or a personal OAuth identity.
+	AuthMode string `json:"auth_mode,omitempty"`
+
 	// App ID from Feishu developer console
 	AppID string `json:"app_id"`
 
@@ -24,10 +27,23 @@ type Config struct {
 	// Base URL for Feishu API (default: https://open.feishu.cn)
 	// Use https://open.larksuite.com for Lark (international) deployments
 	BaseURL string `json:"base_url,omitempty"`
+
+	// Personal OAuth tokens. They are encrypted as data-source credentials.
+	AccessToken           string `json:"access_token,omitempty"`
+	RefreshToken          string `json:"refresh_token,omitempty"`
+	AccessTokenExpiresAt  string `json:"access_token_expires_at,omitempty"`
+	RefreshTokenExpiresAt string `json:"refresh_token_expires_at,omitempty"`
+
+	credentials map[string]interface{}
 }
 
 // DefaultBaseURL is the default Feishu Open Platform API base URL.
 const DefaultBaseURL = "https://open.feishu.cn"
+
+const (
+	AuthModeTenant    = "tenant"
+	AuthModeUserOAuth = "user_oauth"
+)
 
 // LarkBaseURL is the Lark (international) API base URL.
 const LarkBaseURL = "https://open.larksuite.com"
@@ -174,9 +190,9 @@ type exportTaskStatusResponse struct {
 			FileToken string `json:"file_token"`
 			FileSize  int64  `json:"file_size"`
 			// JobStatus: 0=success, 1=initializing, 2=processing
-			JobStatus    int    `json:"job_status"`
-			JobErrorMsg  string `json:"job_error_msg"`
-			FileName     string `json:"file_name"`
+			JobStatus   int    `json:"job_status"`
+			JobErrorMsg string `json:"job_error_msg"`
+			FileName    string `json:"file_name"`
 		} `json:"result"`
 	} `json:"data"`
 }

@@ -54,7 +54,9 @@ import (
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/database"
 	"github.com/Tencent/WeKnora/internal/datasource"
+	dingtalkConnector "github.com/Tencent/WeKnora/internal/datasource/connector/dingtalk"
 	feishuConnector "github.com/Tencent/WeKnora/internal/datasource/connector/feishu"
+	gitConnector "github.com/Tencent/WeKnora/internal/datasource/connector/git"
 	notionConnector "github.com/Tencent/WeKnora/internal/datasource/connector/notion"
 	rssConnector "github.com/Tencent/WeKnora/internal/datasource/connector/rss"
 	yuqueConnector "github.com/Tencent/WeKnora/internal/datasource/connector/yuque"
@@ -1577,6 +1579,12 @@ func initConnectorRegistry() (*datasource.ConnectorRegistry, error) {
 	// Lark is Feishu's international cloud: same connector, different host/tenant.
 	if err := registry.Register(feishuConnector.NewConnector(feishuConnector.RegionLark)); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("register lark connector: %w", err))
+	}
+	if err := registry.Register(dingtalkConnector.NewConnector()); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("register dingtalk connector: %w", err))
+	}
+	if err := registry.Register(gitConnector.NewConnector()); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("register git connector: %w", err))
 	}
 	if err := registry.Register(notionConnector.NewConnector()); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("register notion connector: %w", err))

@@ -112,6 +112,10 @@ type KnowledgeListFilter struct {
 type Knowledge struct {
 	// Unique identifier of the knowledge
 	ID string `json:"id"                 gorm:"type:varchar(36);primaryKey"`
+	// DocumentID is the stable logical document identifier exposed to callers.
+	// A document may point at different Knowledge rows over time, while this ID
+	// remains stable across connector updates and reparsing.
+	DocumentID string `json:"document_id"        gorm:"type:varchar(36);index"`
 	// Workspace ID
 	TenantID uint64 `json:"tenant_id"`
 	// ID of the knowledge base
@@ -191,8 +195,28 @@ func (k *Knowledge) BeforeCreate(tx *gorm.DB) (err error) {
 	if k.ID == "" {
 		k.ID = uuid.New().String()
 	}
+	if k.DocumentID == "" {
+		k.DocumentID = k.ID
+	}
 	return nil
 }
+
+// Document is the stable, source-facing identity of a knowledge item. The
+// current Knowledge row is an engine resource and may be replaced on update.
+type Document struct {
+	ID                 string         `json:"id" gorm:"type:varchar(36);primaryKey"`
+	TenantID           uint64         `json:"tenant_id" gorm:"index"`
+	KnowledgeBaseID    string         `json:"knowledge_base_id" gorm:"type:varchar(36);index"`
+	DataSourceID       string         `json:"datasource_id" gorm:"column:datasource_id;type:varchar(36);not null;default:'';index"`
+	ExternalKey        string         `json:"external_key" gorm:"type:varchar(1024);not null"`
+	CurrentKnowledgeID string         `json:"current_knowledge_id" gorm:"type:varchar(36);index"`
+	Status             string         `json:"status" gorm:"type:varchar(32);index"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
+	DeletedAt          gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+}
+
+func (d *Document) TableName() string { return "documents" }
 
 // ManualKnowledgeMetadata stores metadata for manual Markdown knowledge content.
 type ManualKnowledgeMetadata struct {

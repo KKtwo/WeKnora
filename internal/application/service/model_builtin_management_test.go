@@ -97,3 +97,27 @@ func TestUpdateBuiltinModelCredentials_SystemAdminOnly(t *testing.T) {
 		assert.Empty(t, saved.ManagedBy)
 	})
 }
+
+func TestUpdateModelCredentials_RewritesMatchingCredential(t *testing.T) {
+	key := "legacy-plaintext-key"
+	stored := &types.Model{
+		ID:       "embedding-model",
+		TenantID: 7,
+		Parameters: types.ModelParameters{
+			APIKey: key,
+		},
+	}
+	updateCalls := 0
+	svc := NewModelService(&stubModelRepoForDelete{
+		model: stored,
+		update: func(*types.Model) error {
+			updateCalls++
+			return nil
+		},
+	}, nil, nil, nil, nil, nil)
+
+	updated, err := svc.UpdateModelCredentials(builtinModelContext(false), stored.ID, &key, nil)
+	require.NoError(t, err)
+	assert.Equal(t, key, updated.Parameters.APIKey)
+	assert.Equal(t, 1, updateCalls, "explicit credential PUT must rewrite legacy plaintext at rest")
+}

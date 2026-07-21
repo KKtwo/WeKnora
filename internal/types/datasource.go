@@ -21,6 +21,7 @@ const (
 	ConnectorTypeNotion      = "notion"
 	ConnectorTypeConfluence  = "confluence"
 	ConnectorTypeYuque       = "yuque"
+	ConnectorTypeGit         = "git"
 	ConnectorTypeGitHub      = "github"
 	ConnectorTypeGoogleDrive = "google_drive"
 	ConnectorTypeOneDrive    = "onedrive"
@@ -56,6 +57,10 @@ const (
 type DataSource struct {
 	// Unique identifier
 	ID string `json:"id" gorm:"type:varchar(36);primaryKey"`
+
+	// ExternalRef is an idempotency key owned by the management plane.
+	// It is unique within a tenant and immutable after creation.
+	ExternalRef string `json:"external_ref" gorm:"type:varchar(255);default:'';<-:create"`
 
 	// Workspace ID for multi-workspace isolation
 	TenantID uint64 `json:"tenant_id" gorm:"index"`

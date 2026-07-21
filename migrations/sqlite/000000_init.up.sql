@@ -51,6 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_models_managed_by ON models(managed_by);
 
 CREATE TABLE IF NOT EXISTS knowledge_bases (
     id VARCHAR(36) PRIMARY KEY,
+    external_ref VARCHAR(255) NOT NULL DEFAULT '',
     name VARCHAR(255) NOT NULL,
     description TEXT,
     tenant_id INTEGER NOT NULL,
@@ -84,9 +85,13 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_bases_storage_backend
     ON knowledge_bases(tenant_id, storage_backend_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_bases_tenant_creator
     ON knowledge_bases(tenant_id, creator_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_tenant_external_ref
+    ON knowledge_bases(tenant_id, external_ref)
+    WHERE external_ref != '' AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS knowledges (
     id VARCHAR(36) PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL,
     tenant_id INTEGER NOT NULL,
     knowledge_base_id VARCHAR(36) NOT NULL,
     type VARCHAR(50) NOT NULL,
@@ -120,6 +125,25 @@ CREATE INDEX IF NOT EXISTS idx_knowledges_parse_status ON knowledges(parse_statu
 CREATE INDEX IF NOT EXISTS idx_knowledges_enable_status ON knowledges(enable_status);
 CREATE INDEX IF NOT EXISTS idx_knowledges_tag ON knowledges(tag_id);
 CREATE INDEX IF NOT EXISTS idx_knowledges_summary_status ON knowledges(summary_status);
+CREATE INDEX IF NOT EXISTS idx_knowledges_document_id ON knowledges(document_id);
+
+CREATE TABLE IF NOT EXISTS documents (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id INTEGER NOT NULL,
+    knowledge_base_id VARCHAR(36) NOT NULL,
+    datasource_id VARCHAR(36) NOT NULL DEFAULT '',
+    external_key VARCHAR(1024) NOT NULL,
+    current_knowledge_id VARCHAR(36) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_datasource_external_key
+    ON documents(datasource_id, external_key) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_documents_tenant_kb
+    ON documents(tenant_id, knowledge_base_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
     id VARCHAR(36) PRIMARY KEY,
@@ -727,6 +751,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_embed_channels_publish_token
 
 CREATE TABLE IF NOT EXISTS data_sources (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
+    external_ref VARCHAR(255) NOT NULL DEFAULT '',
     tenant_id INTEGER NOT NULL,
     knowledge_base_id VARCHAR(36) NOT NULL,
     name VARCHAR(255) NOT NULL,
@@ -752,6 +777,9 @@ CREATE INDEX IF NOT EXISTS idx_data_sources_knowledge_base_id ON data_sources (k
 CREATE INDEX IF NOT EXISTS idx_data_sources_type ON data_sources (type);
 CREATE INDEX IF NOT EXISTS idx_data_sources_status ON data_sources (status);
 CREATE INDEX IF NOT EXISTS idx_data_sources_deleted_at ON data_sources (deleted_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_datasource_tenant_external_ref
+    ON data_sources(tenant_id, external_ref)
+    WHERE external_ref != '' AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS sync_logs (
     id VARCHAR(36) NOT NULL PRIMARY KEY,

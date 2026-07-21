@@ -643,6 +643,30 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 			knowledgeBaseIDs = append(knowledgeBaseIDs, request.KnowledgeBaseID)
 		}
 	}
+	if len(request.DocumentIDs) > 0 {
+		tenantID, ok := types.TenantIDFromContext(ctx)
+		if !ok || len(knowledgeBaseIDs) == 0 {
+			c.Error(errors.NewBadRequestError("document_ids require explicit knowledge_base_ids"))
+			return
+		}
+		resolver, ok := h.knowledgebaseService.GetRepository().(interface {
+			ResolveCurrentKnowledgeIDs(context.Context, uint64, []string, []string) ([]string, error)
+		})
+		if !ok {
+			c.Error(errors.NewInternalServerError("stable document resolver unavailable"))
+			return
+		}
+		resolved, err := resolver.ResolveCurrentKnowledgeIDs(ctx, tenantID, knowledgeBaseIDs, request.DocumentIDs)
+		if err != nil {
+			c.Error(errors.NewInternalServerError("failed to resolve stable documents"))
+			return
+		}
+		if len(resolved) != len(dedupRequestStrings(request.DocumentIDs)) {
+			c.Error(errors.NewForbiddenError("one or more documents are outside the requested knowledge bases"))
+			return
+		}
+		request.KnowledgeIDs = dedupRequestStrings(append(request.KnowledgeIDs, resolved...))
+	}
 
 	mentionScopes := tagScopesFromMentionedItems(request.MentionedItems)
 	requestTagIDs := dedupRequestStrings(request.TagIDs)

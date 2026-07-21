@@ -269,6 +269,9 @@ type KnowledgeRepository interface {
 	// FindByMetadataKey finds a knowledge item by a key-value pair in the metadata JSON column.
 	// Used by data source sync to locate existing items by external_id.
 	FindByMetadataKey(ctx context.Context, tenantID uint64, kbID string, key string, value string) (*types.Knowledge, error)
+	// FindByMetadata finds one knowledge item matching every metadata key-value pair.
+	// Data source sync uses datasource_id + external_id as a composite source identity.
+	FindByMetadata(ctx context.Context, tenantID uint64, kbID string, filters map[string]string) (*types.Knowledge, error)
 	// SearchKnowledgeInScopes searches knowledge items by keyword within the given (tenant_id, kb_id) scopes (own + shared).
 	SearchKnowledgeInScopes(ctx context.Context, scopes []types.KnowledgeSearchScope, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error)
 	// ListIDsByTagIDs returns all knowledge IDs that have any of the specified tag IDs (OR semantics).

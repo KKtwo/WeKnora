@@ -425,6 +425,20 @@ const connectorDefs = computed<ConnectorDef[]>(() => [
       { key: 'auth_headers', labelKey: 'datasource.field.authHeaders', placeholder: '', optional: true, hintKey: 'datasource.field.authHeadersHint', fieldType: 'custom_headers' },
     ],
   },
+  {
+    type: 'git',
+    available: true,
+    docUrl: 'https://git-scm.com/docs/git-clone',
+    permissionDocUrl: '',
+    permissionPageUrl: '',
+    requiredPermissions: [],
+    fields: [
+      { key: 'username', labelKey: 'datasource.field.gitUsername', placeholder: 'oauth2', optional: true },
+      { key: 'token', labelKey: 'datasource.field.gitToken', placeholder: '', secret: true, optional: true, hintKey: 'datasource.field.gitTokenHint' },
+      { key: 'private_key', labelKey: 'datasource.field.gitPrivateKey', placeholder: '-----BEGIN OPENSSH PRIVATE KEY-----', secret: true, optional: true, multiline: true },
+      { key: 'known_hosts', labelKey: 'datasource.field.gitKnownHosts', placeholder: 'git.example.com ssh-ed25519 AAAA...', optional: true, multiline: true, hintKey: 'datasource.field.gitKnownHostsHint' },
+    ],
+  },
 ])
 
 
@@ -531,11 +545,28 @@ watch(
   },
 )
 
+watch(
+  () => form.value.config.settings,
+  () => {
+    if (form.value.type === 'git' && needsConnectionTest()) {
+      testResult.value = ''
+      testErrorMsg.value = ''
+    }
+  },
+  { deep: true },
+)
+
 function selectType(def: ConnectorDef) {
   if (!def.available) return
   form.value.type = def.type
   form.value.name = t(`datasource.connector.${def.type}`)
   form.value.config.credentials = {}
+  form.value.config.settings = def.type === 'git'
+    ? {
+        branch: 'main',
+        include_extensions: '.md,.markdown,.txt,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.html,.htm',
+      }
+    : {}
   rssAuthHeaders.value = []
   step.value = 1
 }
@@ -544,6 +575,7 @@ function selectType(def: ConnectorDef) {
 async function testConnection() {
   syncRssAuthHeadersToCredentials()
   if (!validateRssFeedUrls()) return
+  if (!validateGitSettings()) return
   if (!isEdit.value || !credentialsConfigured.value || replaceCredentialsMode.value) {
     const fields = currentDef.value?.fields || []
     for (const f of fields) {
@@ -570,6 +602,10 @@ async function testConnection() {
       if (form.value.type === 'rss') {
         // validate-credentials is credentials-only; feed URLs live in settings.
         creds.feed_urls = form.value.config.settings.feed_urls
+      } else if (form.value.type === 'git') {
+        // The stateless endpoint accepts one map; the connector treats these
+        // non-secret fields as a validation-only settings fallback.
+        Object.assign(creds, form.value.config.settings)
       }
       await validateCredentials(form.value.type, creds)
     }
@@ -734,9 +770,26 @@ function validateRssFeedUrls(): boolean {
   return true
 }
 
+function validateGitSettings(): boolean {
+  if (form.value.type !== 'git') return true
+  const settings = form.value.config.settings
+  if (!String(settings.repo_url || '').trim()) {
+    MessagePlugin.warning(`${t('datasource.field.gitRepoUrl')} ${t('datasource.isRequired')}`)
+    return false
+  }
+  const hasLatestParent = !!String(settings.latest_parent || '').trim()
+  const hasLatestPattern = !!String(settings.latest_pattern || '').trim()
+  if (hasLatestParent !== hasLatestPattern) {
+    MessagePlugin.warning(t('datasource.field.gitLatestPairHint'))
+    return false
+  }
+  return true
+}
+
 function validateStep1Fields(): boolean {
   syncRssAuthHeadersToCredentials()
   if (!validateRssFeedUrls()) return false
+  if (!validateGitSettings()) return false
   if (isEdit.value && credentialsConfigured.value && !replaceCredentialsMode.value) {
     return true
   }
@@ -1154,6 +1207,68 @@ const drawerConfirmText = computed(() => {
             spellcheck="false"
           />
           <p class="form-desc">{{ t('datasource.field.feedUrlsHint') }}</p>
+        </div>
+      </section>
+
+      <section v-if="form.type === 'git'" class="setting-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ t('datasource.field.gitRepository') }}</h4>
+        <div class="form-item">
+          <label class="form-label required">{{ t('datasource.field.gitRepoUrl') }}</label>
+          <t-input
+            v-model="form.config.settings.repo_url"
+            placeholder="https://git.example.com/team/knowledge.git"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="form-desc">{{ t('datasource.field.gitRepoUrlHint') }}</p>
+        </div>
+        <div class="form-item">
+          <label class="form-label">{{ t('datasource.field.gitBranch') }}</label>
+          <t-input
+            v-model="form.config.settings.branch"
+            placeholder="main"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="form-item">
+          <label class="form-label">{{ t('datasource.field.gitPath') }}</label>
+          <t-input
+            v-model="form.config.settings.path"
+            placeholder="docs"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="form-desc">{{ t('datasource.field.gitPathHint') }}</p>
+        </div>
+        <div class="form-item">
+          <label class="form-label">{{ t('datasource.field.gitLatestParent') }}</label>
+          <t-input
+            v-model="form.config.settings.latest_parent"
+            placeholder="versions"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="form-item">
+          <label class="form-label">{{ t('datasource.field.gitLatestPattern') }}</label>
+          <t-input
+            v-model="form.config.settings.latest_pattern"
+            placeholder="version-*"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="form-desc">{{ t('datasource.field.gitLatestPairHint') }}</p>
+        </div>
+        <div class="form-item">
+          <label class="form-label">{{ t('datasource.field.gitExtensions') }}</label>
+          <t-input
+            v-model="form.config.settings.include_extensions"
+            placeholder=".md,.pdf,.docx"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="form-desc">{{ t('datasource.field.gitExtensionsHint') }}</p>
         </div>
       </section>
 

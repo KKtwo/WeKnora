@@ -22,6 +22,7 @@ import (
 const knowledgesTestDDL = `
 CREATE TABLE IF NOT EXISTS knowledges (
     id VARCHAR(36) PRIMARY KEY,
+    document_id VARCHAR(36) NOT NULL DEFAULT '',
     tenant_id INTEGER NOT NULL,
     knowledge_base_id VARCHAR(36) NOT NULL,
     type VARCHAR(50) NOT NULL DEFAULT '',

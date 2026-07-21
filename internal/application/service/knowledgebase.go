@@ -20,6 +20,7 @@ import (
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 )
 
 // ErrInvalidTenantID represents an error for invalid tenant ID
@@ -113,12 +114,29 @@ func (s *knowledgeBaseService) GetRepository() interfaces.KnowledgeBaseRepositor
 func (s *knowledgeBaseService) CreateKnowledgeBase(ctx context.Context,
 	kb *types.KnowledgeBase,
 ) (*types.KnowledgeBase, error) {
+	// Resolve the caller-owned idempotency key before doing expensive storage
+	// and vector-store validation. Replays return the original resource.
+	kb.TenantID = types.MustTenantIDFromContext(ctx)
+	kb.ExternalRef = strings.TrimSpace(kb.ExternalRef)
+	if kb.ExternalRef != "" {
+		if repo, ok := s.repo.(interface {
+			GetKnowledgeBaseByExternalRef(context.Context, uint64, string) (*types.KnowledgeBase, error)
+		}); ok {
+			existing, err := repo.GetKnowledgeBaseByExternalRef(ctx, kb.TenantID, kb.ExternalRef)
+			if err == nil {
+				return existing, nil
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, err
+			}
+		}
+	}
+
 	// Generate UUID and set creation timestamps
 	if kb.ID == "" {
 		kb.ID = uuid.New().String()
 	}
 	kb.CreatedAt = time.Now()
-	kb.TenantID = types.MustTenantIDFromContext(ctx)
 	kb.UpdatedAt = time.Now()
 	// Record the creator so RBAC's RequireOwnershipOrRole can let
 	// Contributors edit their own KBs without granting them tenant-wide

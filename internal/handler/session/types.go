@@ -74,6 +74,7 @@ type SearchKnowledgeRequest struct {
 	KnowledgeBaseID  string                 `json:"knowledge_base_id"`                     // Single knowledge base ID (for backward compatibility)
 	KnowledgeBaseIDs []string               `json:"knowledge_base_ids"`                    // IDs of knowledge bases to search (multi-KB support)
 	KnowledgeIDs     []string               `json:"knowledge_ids"`                         // IDs of specific knowledge (files) to search
+	DocumentIDs      []string               `json:"document_ids"`                          // Stable logical document IDs
 	TagIDs           []string               `json:"tag_ids"`                               // Tag IDs for filtering within a single KB
 	MentionedItems   []MentionedItemRequest `json:"mentioned_items"`                       // Optional scoped tag mentions
 }

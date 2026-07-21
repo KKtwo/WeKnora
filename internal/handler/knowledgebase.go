@@ -22,6 +22,7 @@ import (
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 )
 
 // KnowledgeBaseHandler defines the HTTP handler for knowledge base operations
@@ -35,6 +36,7 @@ type KnowledgeBaseHandler struct {
 	// userService 仅在 list 类接口里用于批量回填 creator_name；
 	// 真正的鉴权由 RBAC 中间件 + Lookup 完成，这里不参与决策。
 	userService interfaces.UserService
+	db          *gorm.DB
 }
 
 // NewKnowledgeBaseHandler creates a new knowledge base handler instance
@@ -46,6 +48,7 @@ func NewKnowledgeBaseHandler(
 	asynqClient interfaces.TaskEnqueuer,
 	vectorStoreService interfaces.VectorStoreService,
 	userService interfaces.UserService,
+	db *gorm.DB,
 ) *KnowledgeBaseHandler {
 	return &KnowledgeBaseHandler{
 		service:            service,
@@ -55,7 +58,111 @@ func NewKnowledgeBaseHandler(
 		asynqClient:        asynqClient,
 		vectorStoreService: vectorStoreService,
 		userService:        userService,
+		db:                 db,
 	}
+}
+
+// KnowledgeBaseReadiness reports whether the current logical document set is
+// fully searchable and no datasource synchronization is still running.
+type KnowledgeBaseReadiness struct {
+	KnowledgeBaseID string         `json:"knowledge_base_id"`
+	DocumentCounts  map[string]int `json:"document_counts"`
+	RunningSyncs    int64          `json:"running_syncs"`
+	LatestSync      *types.SyncLog `json:"latest_sync,omitempty"`
+	Ready           bool           `json:"ready"`
+}
+
+func (h *KnowledgeBaseHandler) GetKnowledgeBaseReadiness(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "readiness database unavailable"})
+		return
+	}
+	ctx := c.Request.Context()
+	kbID := c.Param("id")
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	if tenantID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	type statusCount struct {
+		ParseStatus  string
+		EnableStatus string
+		Count        int
+	}
+	var rows []statusCount
+	if err := h.db.WithContext(ctx).Table("documents AS d").
+		Select("k.parse_status, k.enable_status, COUNT(*) AS count").
+		Joins("JOIN knowledges AS k ON k.id = d.current_knowledge_id AND k.deleted_at IS NULL").
+		Where("d.tenant_id = ? AND d.knowledge_base_id = ? AND d.deleted_at IS NULL", tenantID, kbID).
+		Group("k.parse_status, k.enable_status").Scan(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to calculate readiness"})
+		return
+	}
+
+	counts := make(map[string]int)
+	nonSearchable := 0
+	for _, row := range rows {
+		counts[row.ParseStatus] += row.Count
+		if row.EnableStatus != "enabled" ||
+			(row.ParseStatus != types.ParseStatusCompleted && row.ParseStatus != types.ParseStatusFinalizing) {
+			nonSearchable += row.Count
+		}
+	}
+
+	var running int64
+	if err := h.db.WithContext(ctx).Table("sync_logs AS sl").
+		Joins("JOIN data_sources AS ds ON ds.id = sl.data_source_id AND ds.deleted_at IS NULL").
+		Where("ds.tenant_id = ? AND ds.knowledge_base_id = ? AND sl.status = ?", tenantID, kbID, types.SyncLogStatusRunning).
+		Count(&running).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to calculate sync readiness"})
+		return
+	}
+
+	var latest types.SyncLog
+	latestQuery := h.db.WithContext(ctx).Table("sync_logs AS sl").
+		Select("sl.*").
+		Joins("JOIN data_sources AS ds ON ds.id = sl.data_source_id AND ds.deleted_at IS NULL").
+		Where("ds.tenant_id = ? AND ds.knowledge_base_id = ?", tenantID, kbID).
+		Order("sl.started_at DESC").First(&latest)
+	var latestPtr *types.SyncLog
+	if latestQuery.Error == nil {
+		latestPtr = &latest
+	} else if !stderrors.Is(latestQuery.Error, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load latest sync"})
+		return
+	}
+
+	c.JSON(http.StatusOK, KnowledgeBaseReadiness{
+		KnowledgeBaseID: kbID,
+		DocumentCounts:  counts,
+		RunningSyncs:    running,
+		LatestSync:      latestPtr,
+		Ready:           running == 0 && nonSearchable == 0,
+	})
+}
+
+func (h *KnowledgeBaseHandler) GetDocument(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "document database unavailable"})
+		return
+	}
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	var document types.Document
+	err := h.db.WithContext(c.Request.Context()).
+		Where(
+			"tenant_id = ? AND knowledge_base_id = ? AND id = ?",
+			tenantID, c.Param("id"), c.Param("document_id"),
+		).First(&document).Error
+	if stderrors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load document"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": document})
 }
 
 // buildKBResponse turns a knowledge base into a JSON-ready response shape,
