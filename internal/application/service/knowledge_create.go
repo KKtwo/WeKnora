@@ -23,6 +23,24 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+func isSameSourceFileReplay(existing *types.Knowledge, metadata map[string]string) bool {
+	if existing == nil || metadata == nil {
+		return false
+	}
+	datasourceID := strings.TrimSpace(metadata["datasource_id"])
+	externalID := strings.TrimSpace(metadata["external_id"])
+	if datasourceID == "" || externalID == "" {
+		return false
+	}
+	existingMetadata, err := existing.Metadata.Map()
+	if err != nil {
+		return false
+	}
+	existingDatasourceID, _ := existingMetadata["datasource_id"].(string)
+	existingExternalID, _ := existingMetadata["external_id"].(string)
+	return datasourceID == existingDatasourceID && externalID == existingExternalID
+}
+
 // CreateKnowledgeFromFile creates a knowledge entry from an uploaded file
 func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	kbID string, file *multipart.FileHeader, metadata map[string]string, enableMultimodel *bool, customFileName string, tagIDs []string, channel string,
@@ -91,6 +109,12 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	}
 	if exists {
 		logger.Infof(ctx, "File already exists: %s", fileName)
+		// Connector replays use a stable composite source identity. An unchanged
+		// file is a successful no-op; changed content has a different hash and
+		// continues through CreateKnowledge to advance the logical document.
+		if isSameSourceFileReplay(existingKnowledge, metadata) {
+			return existingKnowledge, nil
+		}
 		// Update creation time for existing knowledge
 		if err := s.repo.UpdateKnowledgeColumn(ctx, existingKnowledge.ID, "created_at", time.Now()); err != nil {
 			logger.Errorf(ctx, "Failed to update existing knowledge: %v", err)

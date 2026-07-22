@@ -229,6 +229,16 @@ func applyKnowledgeListFilter(query *gorm.DB, filter types.KnowledgeListFilter) 
 	return query
 }
 
+// currentKnowledgeVersions excludes immutable history rows from user-facing
+// lists and counters while keeping those rows available to version APIs.
+func currentKnowledgeVersions(query *gorm.DB) *gorm.DB {
+	return query.Where(`EXISTS (
+		SELECT 1 FROM documents
+		WHERE documents.current_knowledge_id = knowledges.id
+		AND documents.deleted_at IS NULL
+	)`)
+}
+
 // ListPagedKnowledgeByKnowledgeBaseID lists all knowledge in a knowledge base with pagination
 func (r *knowledgeRepository) ListPagedKnowledgeByKnowledgeBaseID(
 	ctx context.Context,
@@ -242,7 +252,7 @@ func (r *knowledgeRepository) ListPagedKnowledgeByKnowledgeBaseID(
 
 	scope := func(q *gorm.DB) *gorm.DB {
 		return applyKnowledgeListFilter(
-			q.Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID),
+			currentKnowledgeVersions(q).Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID),
 			filter,
 		)
 	}
@@ -345,7 +355,17 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 	params *types.KnowledgeCheckParams,
 ) (bool, *types.Knowledge, error) {
 	query := r.db.WithContext(ctx).Model(&types.Knowledge{}).
-		Where("tenant_id = ? AND knowledge_base_id = ? AND parse_status <> ?", tenantID, kbID, "failed")
+		// Historical engine resources remain available for version diagnostics,
+		// but duplicate detection must only consider each logical document's
+		// current resource. Otherwise reverting content incorrectly no-ops on an
+		// old hash instead of publishing a new current version.
+		Joins("JOIN documents ON documents.current_knowledge_id = knowledges.id AND documents.deleted_at IS NULL").
+		Where(
+			"knowledges.tenant_id = ? AND knowledges.knowledge_base_id = ? AND knowledges.parse_status <> ?",
+			tenantID,
+			kbID,
+			"failed",
+		)
 
 	switch params.Type {
 	case "file":
@@ -639,7 +659,7 @@ func (r *knowledgeRepository) CountKnowledgeByKnowledgeBaseID(
 	kbID string,
 ) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&types.Knowledge{}).
+	err := currentKnowledgeVersions(r.db.WithContext(ctx).Model(&types.Knowledge{})).
 		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID).
 		Count(&count).Error
 	return count, err
@@ -657,7 +677,7 @@ func (r *knowledgeRepository) CountKnowledgeByStatus(
 	}
 
 	var count int64
-	query := r.db.WithContext(ctx).Model(&types.Knowledge{}).
+	query := currentKnowledgeVersions(r.db.WithContext(ctx).Model(&types.Knowledge{})).
 		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID).
 		Where("parse_status IN ?", parseStatuses)
 

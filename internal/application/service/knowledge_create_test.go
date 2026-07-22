@@ -18,9 +18,11 @@ import (
 type createKnowledgeFileRepoStub struct {
 	interfaces.KnowledgeRepository
 
-	createCalls      int
-	createErr        error
-	createdKnowledge *types.Knowledge
+	createCalls       int
+	createErr         error
+	createdKnowledge  *types.Knowledge
+	exists            bool
+	existingKnowledge *types.Knowledge
 }
 
 func (r *createKnowledgeFileRepoStub) CheckKnowledgeExists(
@@ -29,7 +31,7 @@ func (r *createKnowledgeFileRepoStub) CheckKnowledgeExists(
 	kbID string,
 	params *types.KnowledgeCheckParams,
 ) (bool, *types.Knowledge, error) {
-	return false, nil, nil
+	return r.exists, r.existingKnowledge, nil
 }
 
 func (r *createKnowledgeFileRepoStub) CreateKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
@@ -37,6 +39,15 @@ func (r *createKnowledgeFileRepoStub) CreateKnowledge(ctx context.Context, knowl
 	copied := *knowledge
 	r.createdKnowledge = &copied
 	return r.createErr
+}
+
+func (r *createKnowledgeFileRepoStub) UpdateKnowledgeColumn(
+	context.Context,
+	string,
+	string,
+	interface{},
+) error {
+	return nil
 }
 
 // GetKnowledgeTags is invoked by setAndAttachKnowledgeTags after create even
@@ -190,6 +201,75 @@ func TestCreateKnowledgeFromFilePersistsStoredFilePathOnCreate(t *testing.T) {
 	require.NotNil(t, repo.createdKnowledge)
 	require.Equal(t, "stored/"+knowledge.ID, repo.createdKnowledge.FilePath)
 	require.Equal(t, 1, task.calls)
+}
+
+func TestCreateKnowledgeFromFileTreatsSameSourceDuplicateAsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	existing := &types.Knowledge{
+		ID:       "knowledge-1",
+		FileName: "doc.txt",
+		Metadata: types.JSON(`{"datasource_id":"source-1","external_id":"doc-1"}`),
+	}
+	repo := &createKnowledgeFileRepoStub{exists: true, existingKnowledge: existing}
+	fileSvc := &createKnowledgeFileServiceStub{}
+	task := &createKnowledgeTaskEnqueuerStub{}
+	svc := &knowledgeService{
+		repo:      repo,
+		kbService: &createKnowledgeFileKBServiceStub{kb: &types.KnowledgeBase{ID: "kb-1"}},
+		fileSvc:   fileSvc,
+		task:      task,
+	}
+
+	knowledge, err := svc.CreateKnowledgeFromFile(
+		newCreateKnowledgeFileContext(),
+		"kb-1",
+		newMultipartFileHeader(t, "doc.txt", "hello"),
+		map[string]string{"datasource_id": "source-1", "external_id": "doc-1"},
+		nil,
+		"",
+		nil,
+		"",
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.Same(t, existing, knowledge)
+	require.Zero(t, fileSvc.saveCalls)
+	require.Zero(t, repo.createCalls)
+	require.Zero(t, task.calls)
+}
+
+func TestCreateKnowledgeFromFileKeepsDuplicateConflictForAnotherSource(t *testing.T) {
+	t.Parallel()
+
+	existing := &types.Knowledge{
+		ID:       "knowledge-1",
+		FileName: "doc.txt",
+		Metadata: types.JSON(`{"datasource_id":"source-2","external_id":"doc-2"}`),
+	}
+	repo := &createKnowledgeFileRepoStub{exists: true, existingKnowledge: existing}
+	svc := &knowledgeService{
+		repo:      repo,
+		kbService: &createKnowledgeFileKBServiceStub{kb: &types.KnowledgeBase{ID: "kb-1"}},
+		fileSvc:   &createKnowledgeFileServiceStub{},
+	}
+
+	knowledge, err := svc.CreateKnowledgeFromFile(
+		newCreateKnowledgeFileContext(),
+		"kb-1",
+		newMultipartFileHeader(t, "doc.txt", "hello"),
+		map[string]string{"datasource_id": "source-1", "external_id": "doc-1"},
+		nil,
+		"",
+		nil,
+		"",
+		nil,
+	)
+
+	var duplicateErr *types.DuplicateKnowledgeError
+	require.ErrorAs(t, err, &duplicateErr)
+	require.Same(t, existing, knowledge)
 }
 
 func TestCreateKnowledgeFromFileDeletesStoredFileWhenCreateFails(t *testing.T) {

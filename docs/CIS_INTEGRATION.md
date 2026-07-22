@@ -13,6 +13,8 @@ Knowledge-base create accepts `external_ref=cis:kb:{cis_kb_id}` and datasource c
 
 `documents.id` is a stable logical UUID. `knowledges.document_id` points to it while `documents.current_knowledge_id` selects the current engine object. Connector metadata must include `document_id`, `datasource_type`, `external_id`, `source_url`, `source_revision`, and `source_updated_at`.
 
+File ingestion is idempotent for an unchanged current resource with the same non-empty `(datasource_id, external_id)`: it returns the existing Knowledge as success. A changed or reverted body creates a new engine Knowledge and advances `documents.current_knowledge_id`; historical hashes never suppress a new current version. User-facing lists and counters include only the current Knowledge for each logical document. Duplicate uploads from another source keep the normal `409` behavior.
+
 Retrieval accepts stable `document_ids` only together with explicit `knowledge_base_ids`; it resolves them to current Knowledge IDs inside the tenant and KB scope. Search results include both stable source fields and engine `knowledge_id` / chunk ID.
 
 ## Readiness
