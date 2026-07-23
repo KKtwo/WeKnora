@@ -4,6 +4,7 @@ package gitconnector
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"path"
 	"regexp"
@@ -237,9 +238,23 @@ func validateRepoURL(raw string) error {
 		host = match[1]
 	}
 	if err := secutils.ValidateURLForSSRF("https://" + host); err != nil {
+		// Transparent proxies (for example Clash fake-IP mode) resolve arbitrary
+		// public domains into RFC 2544's 198.18.0.0/15 range. Git still connects
+		// by hostname through that proxy, so requiring every repository domain to
+		// be allowlisted would make the connector unusable. Only relax this exact
+		// proxy-resolution case; localhost, private networks, metadata hosts and
+		// direct IP repository URLs continue to fail the central SSRF check.
+		if isProxyFakeIPValidationError(host, err) {
+			return nil
+		}
 		return fmt.Errorf("repo_url SSRF validation failed: %w", err)
 	}
 	return nil
+}
+
+func isProxyFakeIPValidationError(host string, err error) bool {
+	return err != nil && net.ParseIP(host) == nil &&
+		strings.Contains(err.Error(), "restricted range 198.18.0.0/15")
 }
 
 func validateRef(ref string) error {

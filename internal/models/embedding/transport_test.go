@@ -1,6 +1,7 @@
 package embedding
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,24 @@ func TestValidateEmbeddingBaseURL_RejectsLoopback(t *testing.T) {
 func TestValidateEmbeddingBaseURL_AllowsEmpty(t *testing.T) {
 	if err := validateEmbeddingBaseURL(""); err != nil {
 		t.Fatalf("empty base URL should be allowed: %v", err)
+	}
+}
+
+func TestEmbeddingProxyFakeIPDoesNotRequireWhitelist(t *testing.T) {
+	fakeIPError := fmt.Errorf(
+		"SSRF validation failed: hostname ark.cn-beijing.volces.com resolves to restricted IP 198.18.0.68: restricted range 198.18.0.0/15",
+	)
+	if !shouldAllowEmbeddingProxyFakeIP("https://ark.cn-beijing.volces.com/api/v3", fakeIPError) {
+		t.Fatal("expected a hostname resolved through RFC 2544 fake-IP mode to be allowed")
+	}
+	if shouldAllowEmbeddingProxyFakeIP("https://198.18.0.68/api/v3", fakeIPError) {
+		t.Fatal("direct RFC 2544 IP URLs must remain blocked")
+	}
+	privateError := fmt.Errorf(
+		"SSRF validation failed: hostname embedding.internal resolves to restricted IP 10.0.0.2: private IP address",
+	)
+	if shouldAllowEmbeddingProxyFakeIP("https://embedding.internal/v1", privateError) {
+		t.Fatal("private network resolutions must remain blocked")
 	}
 }
 

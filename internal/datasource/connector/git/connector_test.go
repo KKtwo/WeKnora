@@ -96,6 +96,8 @@ func TestConnectorRejectsUnsafeRepositoryURLsAndPaths(t *testing.T) {
 		{name: "insecure HTTP", settings: map[string]interface{}{"repo_url": "http://example.test/repo.git", "branch": "main"}},
 		{name: "embedded HTTPS credentials", settings: map[string]interface{}{"repo_url": "https://token@example.test/repo.git", "branch": "main"}},
 		{name: "SSH password", settings: map[string]interface{}{"repo_url": "ssh://git:secret@example.test/repo.git", "branch": "main"}},
+		{name: "direct fake IP HTTPS", settings: map[string]interface{}{"repo_url": "https://198.18.0.61/repo.git", "branch": "main"}},
+		{name: "direct fake IP SSH", settings: map[string]interface{}{"repo_url": "ssh://git@198.18.0.61/repo.git", "branch": "main"}},
 		{name: "branch option injection", settings: map[string]interface{}{"repo_url": "https://example.test/repo.git", "branch": "--upload-pack=evil"}},
 		{name: "path escape", settings: map[string]interface{}{"repo_url": "https://example.test/repo.git", "branch": "main", "path": "../secret"}},
 	} {
@@ -104,6 +106,18 @@ func TestConnectorRejectsUnsafeRepositoryURLsAndPaths(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestProxyFakeIPDoesNotRequireRepositoryHostWhitelist(t *testing.T) {
+	require.True(t, isProxyFakeIPValidationError("git.example.com", fmt.Errorf(
+		"SSRF validation failed: hostname git.example.com resolves to restricted IP 198.18.0.61: restricted range 198.18.0.0/15",
+	)))
+	require.False(t, isProxyFakeIPValidationError("198.18.0.61", fmt.Errorf(
+		"SSRF validation failed: IP 198.18.0.61 is in restricted range 198.18.0.0/15",
+	)))
+	require.False(t, isProxyFakeIPValidationError("git.internal", fmt.Errorf(
+		"SSRF validation failed: hostname git.internal resolves to restricted IP 10.0.0.2: private IP address",
+	)))
 }
 
 func TestConnectorListsRepositoryTreeLazily(t *testing.T) {
