@@ -315,3 +315,15 @@ func TestEffectiveStorageProvider_CrossBackendDetection(t *testing.T) {
 			dstSame.EffectiveStorageProvider(tenantDefault), sp)
 	}
 }
+
+func TestResolveParserEngineDefaultsPresentationsToMarkItDown(t *testing.T) {
+	config := ChunkingConfig{}
+	for _, fileType := range []string{"ppt", "pptx", "PPTX"} {
+		if got := config.ResolveParserEngine(fileType); got != "markitdown" {
+			t.Fatalf("ResolveParserEngine(%q) = %q, want markitdown", fileType, got)
+		}
+	}
+	if got := config.ResolveParserEngine("pdf"); got != "" {
+		t.Fatalf("ResolveParserEngine(pdf) = %q, want builtin default", got)
+	}
+}

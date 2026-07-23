@@ -219,6 +219,11 @@ func (c ChunkingConfig) ResolveParserEngine(fileType string) string {
 			}
 		}
 	}
+	// The bundled DocReader handles presentations through its MarkItDown
+	// engine; the builtin engine intentionally covers other Office formats.
+	if strings.EqualFold(fileType, "ppt") || strings.EqualFold(fileType, "pptx") {
+		return "markitdown"
+	}
 	return ""
 }
 
