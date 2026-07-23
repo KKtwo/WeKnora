@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -11,7 +10,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	sqlite3migrate "github.com/golang-migrate/migrate/v4/database/sqlite3"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
@@ -110,22 +108,8 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 
 	var m *migrate.Migrate
 	if opts.SQLiteDBPath != "" {
-		sqlDB, err := sql.Open("sqlite3", opts.SQLiteDBPath)
-		if err != nil {
-			logger.Errorf(ctx, "Failed to open sqlite db for migration: %v", err)
-			wrapped := fmt.Errorf("failed to open sqlite db for migration: %w", err)
-			setMigrationState(0, false, wrapped.Error(), false)
-			return wrapped
-		}
-		driver, err := sqlite3migrate.WithInstance(sqlDB, &sqlite3migrate.Config{})
-		if err != nil {
-			sqlDB.Close()
-			logger.Errorf(ctx, "Failed to create sqlite3 migrate driver: %v", err)
-			wrapped := fmt.Errorf("failed to create sqlite3 migrate driver: %w", err)
-			setMigrationState(0, false, wrapped.Error(), false)
-			return wrapped
-		}
-		m, err = migrate.NewWithDatabaseInstance(migrationsPath, "sqlite3", driver)
+		var err error
+		m, err = newSQLiteMigrator(migrationsPath, opts.SQLiteDBPath)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to create migrate instance: %v", err)
 			wrapped := fmt.Errorf("failed to create migrate instance: %w", err)
