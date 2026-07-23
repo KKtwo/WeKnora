@@ -397,10 +397,10 @@ func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 		return nil
 	}
 
-	// OpenAI-compatible embedding providers commonly cap one input at 4096
-	// tokens. A 7500-rune protected Markdown block can exceed that limit for
-	// Chinese content, so keep the model-independent hard cap conservative.
-	const absoluteMaxSize = 3000
+	// Keep oversized protected Markdown blocks aligned with the configured
+	// 4096-token embedding truncation ceiling. This is an emergency hard cap;
+	// ordinary chunks still follow the knowledge base's smaller ChunkSize.
+	const absoluteMaxSize = 4096
 
 	ht := newHeaderTracker()
 
