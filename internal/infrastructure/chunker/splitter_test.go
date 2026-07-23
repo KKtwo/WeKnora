@@ -1074,3 +1074,16 @@ func TestSplitTextParentChild_WithTableHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeUnitsCapsProtectedContentBelowEmbeddingLimit(t *testing.T) {
+	text := strings.Repeat("数", 7000)
+	chunks := mergeUnits([]splitUnit{{text: text, start: 0, end: 7000}}, 512, 50)
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 chunks, got %d", len(chunks))
+	}
+	for index, chunk := range chunks {
+		if size := len([]rune(chunk.Content)); size > 3000 {
+			t.Fatalf("chunk %d has %d runes, exceeds embedding-safe cap", index, size)
+		}
+	}
+}

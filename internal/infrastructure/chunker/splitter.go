@@ -397,7 +397,10 @@ func mergeUnits(units []splitUnit, chunkSize, chunkOverlap int) []Chunk {
 		return nil
 	}
 
-	const absoluteMaxSize = 7500
+	// OpenAI-compatible embedding providers commonly cap one input at 4096
+	// tokens. A 7500-rune protected Markdown block can exceed that limit for
+	// Chinese content, so keep the model-independent hard cap conservative.
+	const absoluteMaxSize = 3000
 
 	ht := newHeaderTracker()
 
