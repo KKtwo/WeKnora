@@ -6317,7 +6317,7 @@ export default {
       authHeadersHint: "비공개 피드 접근용. 한 줄에 하나씩 「이름: 값」 형식으로 입력하세요. 예: Authorization: Bearer xxxx",
       gitRepository: "저장소",
       gitRepoUrl: "저장소 URL",
-      gitRepoUrlHint: "HTTPS, ssh://, user@host:path를 지원합니다. 로컬 경로와 HTTP는 허용되지 않습니다.",
+      gitRepoUrlHint: "HTTPS, ssh://, user{'@'}host:path를 지원합니다. 로컬 경로와 HTTP는 허용되지 않습니다.",
       gitBranch: "브랜치",
       gitPath: "기본 경로 (선택)",
       gitPathHint: "리소스를 선택하지 않으면 이 파일 또는 디렉터리만 동기화합니다.",

@@ -6140,7 +6140,7 @@ export default {
       authHeadersHint: 'Для приватных лент. По одному в строке в формате «Имя: Значение», например Authorization: Bearer xxxx',
       gitRepository: 'Репозиторий',
       gitRepoUrl: 'URL репозитория',
-      gitRepoUrlHint: 'Поддерживаются HTTPS, ssh:// и user@host:path. Локальные пути и HTTP запрещены.',
+      gitRepoUrlHint: "Поддерживаются HTTPS, ssh:// и user{'@'}host:path. Локальные пути и HTTP запрещены.",
       gitBranch: 'Ветка',
       gitPath: 'Путь по умолчанию (необязательно)',
       gitPathHint: 'Если ресурсы не выбраны, синхронизируется только этот файл или каталог.',

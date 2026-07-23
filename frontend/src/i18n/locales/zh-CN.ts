@@ -6370,7 +6370,7 @@ export default {
       authHeadersHint: "用于访问私有订阅源，每行一个，格式为「名称: 值」，例如 Authorization: Bearer xxxx",
       gitRepository: "仓库设置",
       gitRepoUrl: "仓库地址",
-      gitRepoUrlHint: "支持 HTTPS、ssh:// 和 user@host:path；不允许本地路径和明文 HTTP",
+      gitRepoUrlHint: "支持 HTTPS、ssh:// 和 user{'@'}host:path；不允许本地路径和明文 HTTP",
       gitBranch: "分支",
       gitPath: "默认目录（可选）",
       gitPathHint: "未选择资源时，只同步这个文件或目录",

@@ -6316,7 +6316,7 @@ export default {
       authHeadersHint: 'For private feeds. One per line in "Name: Value" form, e.g. Authorization: Bearer xxxx',
       gitRepository: 'Repository',
       gitRepoUrl: 'Repository URL',
-      gitRepoUrlHint: 'HTTPS, ssh://, and user@host:path URLs are supported. Local paths and plain HTTP are rejected.',
+      gitRepoUrlHint: "HTTPS, ssh://, and user{'@'}host:path URLs are supported. Local paths and plain HTTP are rejected.",
       gitBranch: 'Branch',
       gitPath: 'Default path (optional)',
       gitPathHint: 'Sync only this file or directory when no resources are selected.',
