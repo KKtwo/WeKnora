@@ -71,7 +71,8 @@ func newStreamHandler(svc *DataSourceService, ds *types.DataSource, result *type
 func TestStreamHandler_EmitClassifiesDeletedAndFailed(t *testing.T) {
 	ds := &types.DataSource{ID: "ds-1", Type: types.ConnectorTypeFeishu, SyncDeletions: true}
 	result := &types.SyncResult{}
-	h := newStreamHandler(&DataSourceService{}, ds, result, &types.SyncLog{})
+	svc := &DataSourceService{knowledgeService: &datasourceKnowledgeService{repo: &metadataKnowledgeRepo{}}}
+	h := newStreamHandler(svc, ds, result, &types.SyncLog{})
 
 	require.NoError(t, h.Emit(context.Background(), types.FetchedItem{ExternalID: "gone", IsDeleted: true}))
 	require.NoError(t, h.Emit(context.Background(), types.FetchedItem{

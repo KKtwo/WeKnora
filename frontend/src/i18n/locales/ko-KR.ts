@@ -6287,6 +6287,7 @@ export default {
       feishu_api_error_generic: "Feishu API 오류, 다음 동기화 시 다시 시도합니다",
       sync_failed: "동기화 실패, 다음 동기화 시 다시 시도합니다",
       ingest_failed: "가져오기 실패, 서버 로그를 확인하세요",
+      delete_failed: "삭제 실패, 서버 로그를 확인하세요",
     },
     connector: {
       feishu: "페이슈 (Feishu)",

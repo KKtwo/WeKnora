@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"strings"
 	"testing"
 	"time"
@@ -228,9 +229,123 @@ func TestDeleteFetchedItemDoesNotDeleteAnotherDataSourceDocument(t *testing.T) {
 	require.Empty(t, knowledgeService.deletedIDs)
 }
 
+func TestApplyFetchedItemDeletesSourceOwnedKnowledge(t *testing.T) {
+	repo := &metadataKnowledgeRepo{
+		result: &types.Knowledge{ID: "knowledge-old"},
+	}
+	knowledgeService := &datasourceKnowledgeService{repo: repo}
+	svc := &DataSourceService{knowledgeService: knowledgeService}
+	ds := &types.DataSource{
+		ID:              "source-a",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		SyncDeletions:   true,
+	}
+	result := &types.SyncResult{}
+
+	svc.applyFetchedItem(context.Background(), ds, &types.FetchedItem{
+		ExternalID: "version-8.2.0/docs/readme.md",
+		Title:      "readme",
+		IsDeleted:  true,
+	}, nil, result)
+
+	require.Equal(t, []string{"knowledge-old"}, knowledgeService.deletedIDs)
+	assert.Equal(t, 1, result.Deleted)
+	assert.Zero(t, result.Failed)
+}
+
+func TestApplyFetchedItemPreservesDeletedSourceItemWhenSyncDeletionsDisabled(t *testing.T) {
+	repo := &metadataKnowledgeRepo{
+		result: &types.Knowledge{ID: "knowledge-old"},
+	}
+	knowledgeService := &datasourceKnowledgeService{repo: repo}
+	svc := &DataSourceService{knowledgeService: knowledgeService}
+	result := &types.SyncResult{}
+
+	svc.applyFetchedItem(context.Background(), &types.DataSource{
+		ID:              "source-a",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		SyncDeletions:   false,
+	}, &types.FetchedItem{
+		ExternalID: "docs/readme.md",
+		IsDeleted:  true,
+	}, nil, result)
+
+	assert.Empty(t, knowledgeService.deletedIDs)
+	assert.Zero(t, result.Deleted)
+	assert.Equal(t, 1, result.Skipped)
+	assert.Zero(t, result.Failed)
+}
+
+func TestApplyFetchedItemReportsDeleteFailure(t *testing.T) {
+	svc := &DataSourceService{knowledgeService: &datasourceKnowledgeService{
+		repo: &metadataKnowledgeRepo{err: errors.New("lookup failed")},
+	}}
+	result := &types.SyncResult{}
+
+	svc.applyFetchedItem(context.Background(), &types.DataSource{
+		ID:              "source-a",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		SyncDeletions:   true,
+	}, &types.FetchedItem{
+		ExternalID: "docs/readme.md",
+		Title:      "readme",
+		IsDeleted:  true,
+	}, nil, result)
+
+	assert.Zero(t, result.Deleted)
+	assert.Equal(t, 1, result.Failed)
+	require.Len(t, result.Errors, 1)
+	assert.Equal(t, "delete_failed", result.Errors[0].Code)
+}
+
+func TestApplyFetchedItemsDeletesBeforeCreatingReplacementPath(t *testing.T) {
+	repo := &metadataKnowledgeRepo{
+		results: map[string]*types.Knowledge{
+			"version-8.2.0/docs/readme.md": {ID: "knowledge-old"},
+		},
+	}
+	knowledgeService := &datasourceKnowledgeService{repo: repo}
+	svc := &DataSourceService{knowledgeService: knowledgeService}
+	ds := &types.DataSource{
+		ID:              "source-a",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		Type:            types.ConnectorTypeGit,
+		SyncDeletions:   true,
+	}
+	result := &types.SyncResult{}
+	items := []types.FetchedItem{
+		{
+			ExternalID: "version-8.3.0/docs/readme.md",
+			Title:      "readme",
+			FileName:   "readme.md",
+			Content:    []byte("unchanged content"),
+		},
+		{
+			ExternalID: "version-8.2.0/docs/readme.md",
+			Title:      "readme",
+			IsDeleted:  true,
+		},
+	}
+
+	svc.applyFetchedItems(context.Background(), ds, items, nil, result)
+
+	require.Equal(t, []string{
+		"delete:knowledge-old",
+		"create:version-8.3.0/docs/readme.md",
+	}, knowledgeService.operations)
+	assert.Equal(t, 1, result.Deleted)
+	assert.Equal(t, 1, result.Created)
+	assert.Zero(t, result.Failed)
+}
+
 type metadataKnowledgeRepo struct {
 	interfaces.KnowledgeRepository
 	result  *types.Knowledge
+	results map[string]*types.Knowledge
 	err     error
 	filters map[string]string
 }
@@ -242,6 +357,9 @@ func (r *metadataKnowledgeRepo) FindByMetadata(
 	filters map[string]string,
 ) (*types.Knowledge, error) {
 	r.filters = filters
+	if r.results != nil {
+		return r.results[filters["external_id"]], r.err
+	}
 	return r.result, r.err
 }
 
@@ -249,6 +367,7 @@ type datasourceKnowledgeService struct {
 	interfaces.KnowledgeService
 	repo       interfaces.KnowledgeRepository
 	deletedIDs []string
+	operations []string
 }
 
 func (s *datasourceKnowledgeService) GetRepository() interfaces.KnowledgeRepository {
@@ -257,5 +376,22 @@ func (s *datasourceKnowledgeService) GetRepository() interfaces.KnowledgeReposit
 
 func (s *datasourceKnowledgeService) DeleteKnowledge(_ context.Context, id string) error {
 	s.deletedIDs = append(s.deletedIDs, id)
+	s.operations = append(s.operations, "delete:"+id)
 	return nil
+}
+
+func (s *datasourceKnowledgeService) CreateKnowledgeFromFile(
+	_ context.Context,
+	_ string,
+	_ *multipart.FileHeader,
+	metadata map[string]string,
+	_ *bool,
+	_ string,
+	_ []string,
+	_ string,
+	_ *types.KnowledgeProcessOverrides,
+) (*types.Knowledge, error) {
+	externalID := metadata["external_id"]
+	s.operations = append(s.operations, "create:"+externalID)
+	return &types.Knowledge{ID: "created-" + externalID}, nil
 }

@@ -767,10 +767,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	// Auto-tag: find or create a tag for this data source so synced items are easily identifiable
 	autoTagIDs := s.resolveAutoTagIDs(ctx, ds)
 
-	for _, item := range items {
-		item := item
-		s.applyFetchedItem(withKBActivitySuppressed(ctx), ds, &item, autoTagIDs, result)
-	}
+	s.applyFetchedItems(withKBActivitySuppressed(ctx), ds, items, autoTagIDs, result)
 
 	resultJSON, _ := result.ToJSON()
 	if err := allFetchedItemsFailedError(result); err != nil {
@@ -863,12 +860,26 @@ func (s *DataSourceService) applyFetchedItem(
 	tagIDs []string, result *types.SyncResult,
 ) {
 	if item.IsDeleted {
-		if ds.SyncDeletions {
-			// Count only — actual KB deletion is intentionally not performed.
-			// Users manage knowledge removal explicitly via the KB UI to avoid
-			// accidental data loss from connector misdetection or reconfiguration.
-			result.Deleted++
+		if !ds.SyncDeletions {
+			result.Skipped++
+			return
 		}
+		deleted, err := s.deleteFetchedItem(ctx, ds, item.ExternalID)
+		if err != nil {
+			logger.Warnf(ctx, "failed to delete synced item %q (external_id=%s): %v", item.Title, item.ExternalID, err)
+			result.Failed++
+			recordSyncError(result, types.SyncItemError{
+				Title:   item.Title,
+				Code:    "delete_failed",
+				Message: "Delete failed; see server logs",
+			})
+			return
+		}
+		if !deleted {
+			logger.Infof(ctx, "synced item already absent (external_id=%s)", item.ExternalID)
+		}
+		// A missing row is an idempotent success: the source and KB already agree.
+		result.Deleted++
 		return
 	}
 
@@ -905,6 +916,31 @@ func (s *DataSourceService) applyFetchedItem(
 		result.Updated++
 	} else {
 		result.Created++
+	}
+}
+
+// applyFetchedItems processes source deletions before creates and updates.
+// Connectors append deletion markers after changed items, but handling that
+// order directly can lose data during a path or version-root rollover:
+// unchanged new-path content is first skipped as a duplicate, then the old
+// path is deleted. Deleting the old identities first makes the following
+// upserts converge on the source snapshot instead.
+func (s *DataSourceService) applyFetchedItems(
+	ctx context.Context,
+	ds *types.DataSource,
+	items []types.FetchedItem,
+	tagIDs []string,
+	result *types.SyncResult,
+) {
+	for i := range items {
+		if items[i].IsDeleted {
+			s.applyFetchedItem(ctx, ds, &items[i], tagIDs, result)
+		}
+	}
+	for i := range items {
+		if !items[i].IsDeleted {
+			s.applyFetchedItem(ctx, ds, &items[i], tagIDs, result)
+		}
 	}
 }
 

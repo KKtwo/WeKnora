@@ -6110,6 +6110,7 @@ export default {
       feishu_api_error_generic: 'Ошибка API Feishu; повтор при следующей синхронизации',
       sync_failed: 'Ошибка синхронизации; повтор при следующей синхронизации',
       ingest_failed: 'Ошибка импорта; смотрите логи сервера',
+      delete_failed: 'Ошибка удаления; смотрите логи сервера',
     },
     connector: {
       feishu: 'Feishu (Фэйшу)',

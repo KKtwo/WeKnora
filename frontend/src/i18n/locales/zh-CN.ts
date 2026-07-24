@@ -6340,6 +6340,7 @@ export default {
       feishu_api_error_generic: "飞书接口错误，下次同步时将重试",
       sync_failed: "同步失败，下次同步时将重试",
       ingest_failed: "入库失败，详情见服务日志",
+      delete_failed: "删除失败，详情见服务日志",
     },
     connector: {
       feishu: "飞书",

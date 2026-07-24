@@ -15644,6 +15644,10 @@ const docTemplate = `{
                     "description": "Error message if status is \"error\"",
                     "type": "string"
                 },
+                "external_ref": {
+                    "description": "ExternalRef is an idempotency key owned by the management plane.\nIt is unique within a tenant and immutable after creation.",
+                    "type": "string"
+                },
                 "id": {
                     "description": "Unique identifier",
                     "type": "string"
@@ -16255,6 +16259,10 @@ const docTemplate = `{
                     "description": "Description of the knowledge",
                     "type": "string"
                 },
+                "document_id": {
+                    "description": "DocumentID is the stable logical document identifier exposed to callers.\nA document may point at different Knowledge rows over time, while this ID\nremains stable across connector updates and reparsing.",
+                    "type": "string"
+                },
                 "embedding_model_id": {
                     "description": "ID of the embedding model",
                     "type": "string"
@@ -16411,6 +16419,10 @@ const docTemplate = `{
                 },
                 "embedding_model_id": {
                     "description": "ID of the embedding model",
+                    "type": "string"
+                },
+                "external_ref": {
+                    "description": "ExternalRef is an idempotency key owned by an integrating system.\nIt is unique within a tenant and immutable after creation.",
                     "type": "string"
                 },
                 "extract_config": {
@@ -18471,6 +18483,13 @@ const docTemplate = `{
                     "description": "Content",
                     "type": "string"
                 },
+                "datasource_type": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "description": "DocumentID is the stable logical ID. KnowledgeID remains the engine ID.",
+                    "type": "string"
+                },
                 "end_at": {
                     "description": "End at",
                     "type": "integer"
@@ -18541,6 +18560,16 @@ const docTemplate = `{
                 "seq": {
                     "description": "Seq",
                     "type": "integer"
+                },
+                "source_revision": {
+                    "type": "string"
+                },
+                "source_updated_at": {
+                    "type": "string"
+                },
+                "source_url": {
+                    "description": "Source fields are copied from normalized ingestion metadata.",
+                    "type": "string"
                 },
                 "start_at": {
                     "description": "Start at",
@@ -22065,6 +22094,13 @@ const docTemplate = `{
                 "query"
             ],
             "properties": {
+                "document_ids": {
+                    "description": "Stable logical document IDs",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "knowledge_base_id": {
                     "description": "Single knowledge base ID (for backward compatibility)",
                     "type": "string"

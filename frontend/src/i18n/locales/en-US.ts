@@ -6286,6 +6286,7 @@ export default {
       feishu_api_error_generic: 'Feishu API error; will retry on the next sync',
       sync_failed: 'Sync failed; will retry on the next sync',
       ingest_failed: 'Ingest failed; see server logs',
+      delete_failed: 'Delete failed; see server logs',
     },
     connector: {
       feishu: 'Feishu',
