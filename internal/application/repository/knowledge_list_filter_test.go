@@ -20,6 +20,11 @@ func insertKnowledgeInKB(t *testing.T, db *gorm.DB, tenantID uint64, kbID, statu
 		INSERT INTO knowledges (id, tenant_id, knowledge_base_id, type, title, source, parse_status)
 		VALUES (?, ?, ?, 'file', 'list-filter-test', 'manual', ?)
 	`, id, tenantID, kbID, status).Error)
+	// 列表查询按 documents.current_knowledge_id join，裸插的 knowledge 需要配套文档行。
+	require.NoError(t, db.Exec(`
+		INSERT INTO documents (id, tenant_id, knowledge_base_id, datasource_id, external_key, current_knowledge_id, status)
+		VALUES (?, ?, ?, '', ?, ?, ?)
+	`, id, tenantID, kbID, id, id, status).Error)
 	return id
 }
 

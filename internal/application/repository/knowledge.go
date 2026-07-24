@@ -324,14 +324,28 @@ func (r *knowledgeRepository) DeleteKnowledge(ctx context.Context, tenantID uint
 		if knowledge.DocumentID == "" {
 			return nil
 		}
+		// current_knowledge_id 仍指向被删世代 ⇒ 该文档已无更新的内容世代，
+		// 逻辑文档行必须同步软删；否则默认查询仍能解析到无内容的幽灵文档。
+		// 重导场景中 current 已指向新世代，条件不匹配，文档行保持不动。
+		now := time.Now().UTC()
 		return tx.Model(&types.Document{}).Where("id = ? AND current_knowledge_id = ?", knowledge.DocumentID, id).
-			Updates(map[string]interface{}{"status": "deleted", "updated_at": time.Now().UTC()}).Error
+			Updates(map[string]interface{}{"status": "deleted", "updated_at": now, "deleted_at": now}).Error
 	})
 }
 
-// DeleteKnowledge deletes knowledge
+// DeleteKnowledgeList deletes knowledge in batch
 func (r *knowledgeRepository) DeleteKnowledgeList(ctx context.Context, tenantID uint64, ids []string) error {
-	return r.db.WithContext(ctx).Where("tenant_id = ? AND id in ?", tenantID, ids).Delete(&types.Knowledge{}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("tenant_id = ? AND id in ?", tenantID, ids).Delete(&types.Knowledge{}).Error; err != nil {
+			return err
+		}
+		// 与单删同一条规则：批次内世代仍被 current_knowledge_id 引用的文档已无
+		// 更新世代，同步软删；已重导指向新世代的文档不受影响。
+		now := time.Now().UTC()
+		return tx.Model(&types.Document{}).
+			Where("tenant_id = ? AND current_knowledge_id IN ?", tenantID, ids).
+			Updates(map[string]interface{}{"status": "deleted", "updated_at": now, "deleted_at": now}).Error
+	})
 }
 
 // GetKnowledgeBatch gets knowledge in batch

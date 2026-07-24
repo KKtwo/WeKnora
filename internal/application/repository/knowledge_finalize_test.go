@@ -67,6 +67,8 @@ func setupKnowledgeTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.Exec(knowledgesTestDDL).Error)
+	// 生产查询（如 ListPagedKnowledgeByKnowledgeBaseID）会 join documents 表。
+	require.NoError(t, db.AutoMigrate(&types.Document{}))
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return db
 }

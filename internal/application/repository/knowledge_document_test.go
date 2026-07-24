@@ -126,6 +126,78 @@ func TestKnowledgeListAndCountsOnlyIncludeCurrentDocumentVersions(t *testing.T) 
 	require.EqualValues(t, 2, completed)
 }
 
+func TestDeleteKnowledgeSoftDeletesDocumentRow(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:delete_document_row?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.Document{}))
+	repo := NewKnowledgeRepository(db)
+
+	knowledge := &types.Knowledge{
+		ID:              "knowledge-v1",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		ParseStatus:     types.ParseStatusCompleted,
+		Metadata:        types.JSON(`{"datasource_id":"source-1","external_id":"docs/a.md"}`),
+	}
+	require.NoError(t, repo.CreateKnowledge(context.Background(), knowledge))
+
+	require.NoError(t, repo.DeleteKnowledge(context.Background(), 1, "knowledge-v1"))
+
+	// 最后一个内容世代删除后，逻辑文档行必须一并软删，
+	// 否则默认查询仍能解析到一个没有可读内容的“幽灵文档”。
+	var live []types.Document
+	require.NoError(t, db.Find(&live).Error)
+	require.Empty(t, live)
+	var all []types.Document
+	require.NoError(t, db.Unscoped().Find(&all).Error)
+	require.Len(t, all, 1)
+	require.True(t, all[0].DeletedAt.Valid)
+}
+
+func TestDeleteKnowledgeListSoftDeletesCurrentDocumentRows(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:delete_document_rows_batch?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.Document{}))
+	repo := NewKnowledgeRepository(db)
+
+	for _, knowledge := range []*types.Knowledge{
+		{
+			ID: "knowledge-a", TenantID: 1, KnowledgeBaseID: "kb-1",
+			ParseStatus: types.ParseStatusCompleted,
+			Metadata:    types.JSON(`{"datasource_id":"source-1","external_id":"docs/a.md"}`),
+		},
+		{
+			ID: "knowledge-b", TenantID: 1, KnowledgeBaseID: "kb-1",
+			ParseStatus: types.ParseStatusCompleted,
+			Metadata:    types.JSON(`{"datasource_id":"source-1","external_id":"docs/b.md"}`),
+		},
+		// docs/c.md 先建 v1 再重导出 v2：document 的 current 指向 v2。
+		{
+			ID: "knowledge-c-v1", TenantID: 1, KnowledgeBaseID: "kb-1",
+			ParseStatus: types.ParseStatusCompleted,
+			Metadata:    types.JSON(`{"datasource_id":"source-1","external_id":"docs/c.md"}`),
+		},
+		{
+			ID: "knowledge-c-v2", TenantID: 1, KnowledgeBaseID: "kb-1",
+			ParseStatus: types.ParseStatusCompleted,
+			Metadata:    types.JSON(`{"datasource_id":"source-1","external_id":"docs/c.md"}`),
+		},
+	} {
+		require.NoError(t, repo.CreateKnowledge(context.Background(), knowledge))
+	}
+
+	// 批量删除 a、b 的当前世代和 c 的旧世代 v1。
+	require.NoError(t, repo.DeleteKnowledgeList(
+		context.Background(), 1, []string{"knowledge-a", "knowledge-b", "knowledge-c-v1"},
+	))
+
+	// a、b 已无内容世代 → 文档行软删；c 的 current 仍指向 v2 → 文档行保留。
+	var live []types.Document
+	require.NoError(t, db.Find(&live).Error)
+	require.Len(t, live, 1)
+	require.Equal(t, "knowledge-c-v2", live[0].CurrentKnowledgeID)
+}
+
 func TestResolveCurrentKnowledgeIDsIsExplicitlyKnowledgeBaseScoped(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:document_scope?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
