@@ -10,10 +10,25 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// runQueryExpansion performs query expansion when initial recall is low.
-// It generates query variants and runs concurrent retrieval across search targets.
+var compositeQueryPattern = regexp.MustCompile(`[?？;；。\n]+|(?:以及|并且|同时|除此之外|除了.+还|分别)`)
+
+// shouldExpandQuery keeps simple high-recall queries on the fast path while
+// decomposing multi-part questions even when the first recall already filled top-k.
+func shouldExpandQuery(enabled bool, query string, resultCount, embeddingTopK int) bool {
+	if !enabled {
+		return false
+	}
+	if resultCount < max(1, embeddingTopK) {
+		return true
+	}
+	query = strings.TrimSpace(query)
+	return len([]rune(query)) >= 12 && compositeQueryPattern.MatchString(query)
+}
+
+// runQueryExpansion generates query variants and runs concurrent retrieval across
+// search targets for either low-recall or composite questions.
 func (p *PluginSearch) runQueryExpansion(ctx context.Context, chatManage *types.ChatManage) []*types.SearchResult {
-	pipelineInfo(ctx, "Search", "recall_low", map[string]interface{}{
+	pipelineInfo(ctx, "Search", "query_expansion_triggered", map[string]interface{}{
 		"current":   len(chatManage.SearchResult),
 		"threshold": chatManage.EmbeddingTopK,
 	})

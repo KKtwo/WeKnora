@@ -132,7 +132,12 @@ func (p *PluginSearch) OnEvent(ctx context.Context,
 	logSearchScoreSample(ctx, "result_score_before_normalize", chatManage.SearchResult)
 
 	// If recall is low, attempt query expansion with keyword-focused search
-	if chatManage.EnableQueryExpansion && len(chatManage.SearchResult) < max(1, chatManage.EmbeddingTopK) {
+	if shouldExpandQuery(
+		chatManage.EnableQueryExpansion,
+		chatManage.RewriteQuery,
+		len(chatManage.SearchResult),
+		chatManage.EmbeddingTopK,
+	) {
 		expResults := p.runQueryExpansion(ctx, chatManage)
 		if len(expResults) > 0 {
 			chatManage.SearchResult = append(chatManage.SearchResult, expResults...)

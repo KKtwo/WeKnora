@@ -844,6 +844,10 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 			KeywordThreshold: rc.GetEffectiveKeywordThreshold(),
 			RerankTopK:       rc.GetEffectiveRerankTopK(),
 			RerankThreshold:  rc.GetEffectiveRerankThreshold(),
+			// The retrieval-only API has no agent-level switch. Keep the original
+			// query as the rerank query and let the search plugin add local variants
+			// only for low-recall or genuinely composite questions.
+			EnableQueryExpansion: true,
 		},
 		PipelineState: types.PipelineState{
 			RewriteQuery: query,
