@@ -297,6 +297,11 @@ func selectFiles(
 		if !hasAllowedExtension(filePath, cfg.IncludeExtensions) {
 			continue
 		}
+		// 点开头的路径段是隐藏文件/工具伴生文件（如 .github/、
+		// ".项目档案.overview.md" 摘要），不属于知识正文，与旧链路规则对齐。
+		if hasHiddenPathSegment(filePath) {
+			continue
+		}
 		for _, root := range roots {
 			if pathWithinRoot(filePath, root) {
 				selected[filePath] = blob
@@ -305,6 +310,15 @@ func selectFiles(
 		}
 	}
 	return selected, selectedRoot, nil
+}
+
+func hasHiddenPathSegment(filePath string) bool {
+	for _, segment := range strings.Split(filePath, "/") {
+		if strings.HasPrefix(segment, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveLatestRoot(parent, pattern string, files map[string]string) (string, error) {

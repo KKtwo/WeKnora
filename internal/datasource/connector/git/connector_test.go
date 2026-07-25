@@ -57,6 +57,31 @@ func TestConnectorFetchIncrementalDetectsCreateUpdateAndDelete(t *testing.T) {
 	require.True(t, byID["docs/b.md"].IsDeleted)
 }
 
+func TestConnectorSkipsHiddenFilesAndDirectories(t *testing.T) {
+	allowTestGitHost(t)
+	runner := &fakeGitRunner{
+		commit: "commit-a",
+		files: map[string]fakeGitFile{
+			"docs/项目档案.md":              {blob: "blob-main", content: "# 主文档"},
+			"docs/.项目档案.overview.md":    {blob: "blob-ov", content: "# 文档概览"},
+			"docs/.项目档案.abstract.md":    {blob: "blob-ab", content: "# 摘要"},
+			"docs/.hidden/nested.md":    {blob: "blob-hd", content: "# 隐藏目录"},
+			".github/CONTRIBUTING.md":   {blob: "blob-gh", content: "# 贡献指南"},
+		},
+	}
+	connector := newConnector(runner)
+	cfg := gitDataSourceConfig(map[string]interface{}{
+		"repo_url":           "ssh://git@example.test/team/docs.git",
+		"branch":             "main",
+		"include_extensions": ".md",
+	})
+
+	items, _, err := connector.FetchIncremental(context.Background(), cfg, nil)
+	require.NoError(t, err)
+	// 点开头的伴生摘要文件和隐藏目录内容不进知识库，与 CIS 旧链路的隐藏文件规则对齐。
+	require.Equal(t, []string{"docs/项目档案.md"}, itemIDs(items))
+}
+
 func TestConnectorLatestSelectorUsesNaturalVersionOrder(t *testing.T) {
 	allowTestGitHost(t)
 	runner := &fakeGitRunner{
