@@ -392,16 +392,18 @@ func (p *PluginSearch) searchByTargets(
 
 			// Compute embedding once for this model group.
 			var queryEmbedding []float32
+			disableVector := false
 			if modelKey != "" {
 				emb, err := p.knowledgeBaseService.GetQueryEmbedding(ctx, targets[0].KnowledgeBaseID, queryText)
 				if err != nil {
-					pipelineWarn(ctx, "Search", "group_embed_error", map[string]interface{}{
+					// 远程 embedding API 的限流/长尾不应让整次检索失败：
+					// 降级为纯关键词检索，保证调用方仍能拿到可用结果。
+					pipelineWarn(ctx, "Search", "group_embed_degrade_keyword", map[string]interface{}{
 						"model_key": modelKey,
 						"kb_id":     targets[0].KnowledgeBaseID,
 						"error":     err.Error(),
 					})
-					recordError(err)
-					return
+					disableVector = true
 				} else {
 					queryEmbedding = emb
 				}
@@ -442,6 +444,7 @@ func (p *PluginSearch) searchByTargets(
 						KeywordThreshold:      chatManage.KeywordThreshold,
 						MatchCount:            chatManage.EmbeddingTopK,
 						SkipContextEnrichment: true,
+						DisableVectorMatch:    disableVector,
 					}
 					res, err := p.knowledgeBaseService.HybridSearch(ctx, fullKBIDs[0], params)
 					if err != nil {
@@ -468,7 +471,7 @@ func (p *PluginSearch) searchByTargets(
 				go func(t *types.SearchTarget) {
 					defer innerWg.Done()
 					recordError(p.searchSingleTarget(
-						ctx, chatManage, t, queryText, queryEmbedding, &mu, &results,
+						ctx, chatManage, t, queryText, queryEmbedding, disableVector, &mu, &results,
 					))
 				}(target)
 			}
@@ -492,6 +495,7 @@ func (p *PluginSearch) searchSingleTarget(
 	t *types.SearchTarget,
 	queryText string,
 	queryEmbedding []float32,
+	disableVector bool,
 	mu *sync.Mutex,
 	results *[]*types.SearchResult,
 ) error {
@@ -519,6 +523,7 @@ func (p *PluginSearch) searchSingleTarget(
 		TagIDs:                t.TagIDs,
 		ScopeTagIDs:           t.ScopeTagIDs,
 		SkipContextEnrichment: true,
+		DisableVectorMatch:    disableVector,
 	}
 	if t.Type == types.SearchTargetTypeKnowledge {
 		params.KnowledgeIDs = t.KnowledgeIDs
