@@ -729,9 +729,11 @@ func (r *knowledgeRepository) FindByMetadataKey(
 	return r.FindByMetadata(ctx, tenantID, kbID, map[string]string{key: value})
 }
 
-// FindByMetadata finds a knowledge item whose metadata matches every supplied
+// FindByMetadata finds the knowledge item whose metadata matches every supplied
 // key-value pair. Sorting keys keeps generated SQL deterministic for tests and
-// query diagnostics.
+// query diagnostics. Only the document's current generation is considered:
+// generation swaps can briefly leave multiple live rows for one logical
+// document, and sync update/delete must never target a stale generation.
 func (r *knowledgeRepository) FindByMetadata(
 	ctx context.Context,
 	tenantID uint64,
@@ -743,8 +745,10 @@ func (r *knowledgeRepository) FindByMetadata(
 	}
 
 	var knowledge types.Knowledge
-	query := r.db.WithContext(ctx).
-		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", tenantID, kbID)
+	query := currentKnowledgeVersions(
+		r.db.WithContext(ctx).Model(&types.Knowledge{}).
+			Where("tenant_id = ? AND knowledge_base_id = ? AND knowledges.deleted_at IS NULL", tenantID, kbID),
+	)
 	keys := make([]string, 0, len(filters))
 	for key := range filters {
 		keys = append(keys, key)
