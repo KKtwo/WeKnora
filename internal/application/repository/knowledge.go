@@ -86,10 +86,13 @@ func (r *knowledgeRepository) CreateKnowledge(ctx context.Context, knowledge *ty
 		}
 
 		// Resolve concurrent/replayed connector writes to the existing logical
-		// document before persisting the new engine resource.
+		// document before persisting the new engine resource. Unscoped: the
+		// connector update path deletes the old generation first (which
+		// soft-deletes the document row), so the stable ID may be on a
+		// soft-deleted row that must be reused, not shadowed by a new one.
 		if externalKey != "" {
 			var existing types.Document
-			err := tx.Where("datasource_id = ? AND external_key = ?", datasourceID, externalKey).
+			err := tx.Unscoped().Where("datasource_id = ? AND external_key = ?", datasourceID, externalKey).
 				First(&existing).Error
 			if err == nil {
 				knowledge.DocumentID = existing.ID
@@ -115,6 +118,14 @@ func (r *knowledgeRepository) CreateKnowledge(ctx context.Context, knowledge *ty
 		}
 		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).
 			Create(document).Error; err != nil {
+			return err
+		}
+		// Revive the soft-deleted row left by the delete half of an update:
+		// OnConflict DoNothing skipped it and default-scope updates miss it,
+		// which would leave the new generation pointing at a dead document.
+		if err := tx.Unscoped().Model(&types.Document{}).
+			Where("id = ? AND deleted_at IS NOT NULL", knowledge.DocumentID).
+			Update("deleted_at", nil).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(knowledge).Error; err != nil {

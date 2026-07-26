@@ -154,6 +154,43 @@ func TestDeleteKnowledgeSoftDeletesDocumentRow(t *testing.T) {
 	require.True(t, all[0].DeletedAt.Valid)
 }
 
+func TestCreateKnowledgeRevivesSoftDeletedDocumentOnReupsert(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:revive_document_row?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.Document{}))
+	repo := NewKnowledgeRepository(db)
+
+	v1 := &types.Knowledge{
+		ID:              "knowledge-v1",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		ParseStatus:     types.ParseStatusCompleted,
+		Metadata:        types.JSON(`{"datasource_id":"source-1","external_id":"docs/a.md"}`),
+	}
+	require.NoError(t, repo.CreateKnowledge(context.Background(), v1))
+
+	// 同步器的“文档更新”是先删旧世代再以同一稳定 document_id 重建新世代。
+	require.NoError(t, repo.DeleteKnowledge(context.Background(), 1, "knowledge-v1"))
+
+	v2 := &types.Knowledge{
+		ID:              "knowledge-v2",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		ParseStatus:     types.ParseStatusCompleted,
+		Metadata: types.JSON(
+			`{"datasource_id":"source-1","external_id":"docs/a.md","document_id":"` + v1.DocumentID + `"}`,
+		),
+	}
+	require.NoError(t, repo.CreateKnowledge(context.Background(), v2))
+
+	// 文档行必须复活并指向新世代，否则检索返回的 document_id 无法解析（读取 404）。
+	var live []types.Document
+	require.NoError(t, db.Find(&live).Error)
+	require.Len(t, live, 1)
+	require.Equal(t, v1.DocumentID, live[0].ID)
+	require.Equal(t, "knowledge-v2", live[0].CurrentKnowledgeID)
+}
+
 func TestDeleteKnowledgeListSoftDeletesCurrentDocumentRows(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:delete_document_rows_batch?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
