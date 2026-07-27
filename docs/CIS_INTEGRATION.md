@@ -25,7 +25,7 @@ Retrieval accepts stable `document_ids` only together with explicit `knowledge_b
 
 ## Storage migration
 
-Apply `migrations/versioned/000070_cis_integration.up.sql` before enabling CIS. PostgreSQL is the supported retrieval driver for the initial CIS rollout. PostgreSQL and object storage must be backed up together; Redis is never a knowledge fact source.
+Apply `migrations/versioned/000075_cis_integration.up.sql` before enabling CIS. PostgreSQL is the supported retrieval driver for the initial CIS rollout. PostgreSQL and object storage must be backed up together; Redis is never a knowledge fact source.
 
 The production application image is built with the `postgres_only` Go build tag. This excludes the SQLite database, migration and retrieval drivers from the server binary. Production deployments must set both `DB_DRIVER=postgres` and `RETRIEVE_DRIVER=postgres`; use the regular or Lite build when SQLite support is required.
 
