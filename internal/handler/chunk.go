@@ -6,6 +6,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
@@ -79,6 +80,17 @@ func (h *ChunkHandler) GetChunkByIDOnly(c *gin.Context) {
 	if chunk.Content != "" {
 		chunk.Content = secutils.SanitizeForDisplay(chunk.Content)
 	}
+
+	// Keep the exact chunk endpoint consistent with search results: parser-
+	// trusted URLs stay authoritative while child chunks add caption/OCR data.
+	result := &types.SearchResult{ID: chunk.ID, ImageInfo: chunk.ImageInfo}
+	searchutil.EnrichSearchResultsImageInfo(
+		ctx,
+		h.service.GetRepository(),
+		chunk.TenantID,
+		[]*types.SearchResult{result},
+	)
+	chunk.ImageInfo = result.ImageInfo
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

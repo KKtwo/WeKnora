@@ -164,6 +164,33 @@ type ProcessChunksOptions struct {
 	Metadata     map[string]string
 }
 
+// trustedStoredImageInfoForContent returns metadata only for images that the
+// parser resolved and persisted during this processing run. A provider-looking
+// URL appearing in document text alone is not sufficient proof of ownership.
+func trustedStoredImageInfoForContent(content string, storedImages []docparser.StoredImage) string {
+	seen := make(map[string]bool)
+	infos := make([]types.ImageInfo, 0)
+	for _, image := range storedImages {
+		servingURL := strings.TrimSpace(image.ServingURL)
+		if servingURL == "" || seen[servingURL] || !strings.Contains(content, servingURL) {
+			continue
+		}
+		seen[servingURL] = true
+		infos = append(infos, types.ImageInfo{
+			URL:         servingURL,
+			OriginalURL: image.OriginalRef,
+		})
+	}
+	if len(infos) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(infos)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 // finalizeIndexedKnowledgeState makes a document retrievable as soon as chunks
 // and indexes are persisted (enable_status=enabled), but it deliberately does
 // NOT mark the row completed when enrichment is still expected. Whenever the
@@ -401,6 +428,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 				StartAt:         pc.Start,
 				EndAt:           pc.End,
 				ChunkType:       types.ChunkTypeParentText,
+				ImageInfo:       trustedStoredImageInfoForContent(pc.Content, options.StoredImages),
 			}
 		}
 		// Set prev/next links for parent chunks
@@ -441,6 +469,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 			StartAt:         int(chunkData.Start),
 			EndAt:           int(chunkData.End),
 			ChunkType:       types.ChunkTypeText,
+			ImageInfo:       trustedStoredImageInfoForContent(chunkData.Content, options.StoredImages),
 		}
 
 		// Wire up ParentChunkID for child chunks
@@ -2435,24 +2464,24 @@ func (s *knowledgeService) UpdateImageInfo(
 	chunkID string,
 	imageInfo string,
 ) error {
-	var images []*types.ImageInfo
-	if err := json.Unmarshal([]byte(imageInfo), &images); err != nil {
-		logger.Errorf(ctx, "Failed to unmarshal image info: %v", err)
-		return err
-	}
-	if len(images) != 1 {
-		logger.Warnf(ctx, "Expected exactly one image info, got %d", len(images))
-		return nil
-	}
-	image := images[0]
-
 	// Retrieve all chunks with the given parent chunk ID
 	chunk, err := s.chunkService.GetChunkByID(ctx, chunkID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get chunk: %v", err)
 		return err
 	}
-	chunk.ImageInfo = imageInfo
+	if chunk.KnowledgeID != knowledgeID {
+		return fmt.Errorf("chunk does not belong to the requested knowledge")
+	}
+	mergedImageInfo, image, err := mergeEditableImageInfo(chunk.ImageInfo, imageInfo)
+	if err != nil {
+		return err
+	}
+	childImageInfo, err := json.Marshal([]*types.ImageInfo{image})
+	if err != nil {
+		return err
+	}
+	chunk.ImageInfo = mergedImageInfo
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	chunkChildren, err := s.chunkService.ListChunkByParentID(ctx, tenantID, chunkID)
 	if err != nil {
@@ -2483,9 +2512,8 @@ func (s *knowledgeService) UpdateImageInfo(
 		if len(cImageInfo) == 0 {
 			continue
 		}
-		if cImageInfo[0].OriginalURL != image.OriginalURL {
-			logger.Warnf(ctx, "Skipping chunk ID: %s, image URL mismatch: %s != %s",
-				child.ID, cImageInfo[0].OriginalURL, image.OriginalURL)
+		if cImageInfo[0].URL != image.URL {
+			logger.Warnf(ctx, "Skipping chunk ID %s because its trusted image URL does not match", child.ID)
 			continue
 		}
 
@@ -2496,7 +2524,7 @@ func (s *knowledgeService) UpdateImageInfo(
 			// Update caption if it has changed
 			if image.Caption != cImageInfo[0].Caption {
 				child.Content = image.Caption
-				child.ImageInfo = imageInfo
+				child.ImageInfo = string(childImageInfo)
 				updateChunk = append(updateChunk, chunkChildren[i])
 			}
 		case types.ChunkTypeImageOCR:
@@ -2504,7 +2532,7 @@ func (s *knowledgeService) UpdateImageInfo(
 			// Update OCR if it has changed
 			if image.OCRText != cImageInfo[0].OCRText {
 				child.Content = image.OCRText
-				child.ImageInfo = imageInfo
+				child.ImageInfo = string(childImageInfo)
 				updateChunk = append(updateChunk, chunkChildren[i])
 			}
 		}
@@ -2520,7 +2548,7 @@ func (s *knowledgeService) UpdateImageInfo(
 			Content:         image.Caption,
 			ChunkType:       types.ChunkTypeImageCaption,
 			ParentChunkID:   chunk.ID,
-			ImageInfo:       imageInfo,
+			ImageInfo:       string(childImageInfo),
 		}
 		addChunk = append(addChunk, captionChunk)
 		logger.Infof(ctx, "Created new caption chunk ID: %s for image URL: %s", captionChunk.ID, image.OriginalURL)
@@ -2536,7 +2564,7 @@ func (s *knowledgeService) UpdateImageInfo(
 			Content:         image.OCRText,
 			ChunkType:       types.ChunkTypeImageOCR,
 			ParentChunkID:   chunk.ID,
-			ImageInfo:       imageInfo,
+			ImageInfo:       string(childImageInfo),
 		}
 		addChunk = append(addChunk, ocrChunk)
 		logger.Infof(ctx, "Created new OCR chunk ID: %s for image URL: %s", ocrChunk.ID, image.OriginalURL)
@@ -2581,7 +2609,7 @@ func (s *knowledgeService) UpdateImageInfo(
 		logger.Errorf(ctx, "Failed to get knowledge: %v", err)
 		return err
 	}
-	fileHash := calculateStr(knowledgeID, knowledge.FileHash, imageInfo)
+	fileHash := calculateStr(knowledgeID, knowledge.FileHash, mergedImageInfo)
 	knowledge.FileHash = fileHash
 	err = s.repo.UpdateKnowledge(ctx, knowledge)
 	if err != nil {
@@ -2590,6 +2618,39 @@ func (s *knowledgeService) UpdateImageInfo(
 
 	logger.Infof(ctx, "Updated chunk successfully, chunk ID: %s, knowledge ID: %s", chunk.ID, chunk.KnowledgeID)
 	return nil
+}
+
+// mergeEditableImageInfo allows user edits to enrichment text only. The parser-
+// trusted URL and original reference remain immutable and no new asset can be
+// introduced through the update endpoint.
+func mergeEditableImageInfo(currentRaw string, requestRaw string) (string, *types.ImageInfo, error) {
+	var current []types.ImageInfo
+	if err := json.Unmarshal([]byte(currentRaw), &current); err != nil {
+		return "", nil, fmt.Errorf("invalid stored image info: %w", err)
+	}
+	var requested []types.ImageInfo
+	if err := json.Unmarshal([]byte(requestRaw), &requested); err != nil {
+		return "", nil, fmt.Errorf("invalid image info update: %w", err)
+	}
+	if len(requested) != 1 || requested[0].URL == "" {
+		return "", nil, fmt.Errorf("exactly one existing image URL is required")
+	}
+	for index := range current {
+		if current[index].URL != requested[0].URL {
+			continue
+		}
+		if current[index].OriginalURL != requested[0].OriginalURL {
+			return "", nil, fmt.Errorf("image references are immutable")
+		}
+		current[index].Caption = requested[0].Caption
+		current[index].OCRText = requested[0].OCRText
+		data, err := json.Marshal(current)
+		if err != nil {
+			return "", nil, err
+		}
+		return string(data), &current[index], nil
+	}
+	return "", nil, fmt.Errorf("image URL is not registered on this chunk")
 }
 
 // ProcessManualUpdate handles Asynq manual knowledge update tasks.

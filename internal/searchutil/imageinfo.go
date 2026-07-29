@@ -123,8 +123,8 @@ func CollectImageInfoByChunkIDs(
 	return out
 }
 
-// EnrichSearchResultsImageInfo fills in ImageInfo for SearchResults that have
-// none by batch-querying child image chunks.
+// EnrichSearchResultsImageInfo merges caption/OCR metadata from child image
+// chunks into each result's parser-trusted direct image metadata.
 func EnrichSearchResultsImageInfo(
 	ctx context.Context,
 	chunkRepo interfaces.ChunkRepository,
@@ -134,9 +134,6 @@ func EnrichSearchResultsImageInfo(
 	var chunkIDs []string
 	seen := make(map[string]bool)
 	for _, r := range results {
-		if r.ImageInfo != "" {
-			continue
-		}
 		if !seen[r.ID] {
 			seen[r.ID] = true
 			chunkIDs = append(chunkIDs, r.ID)
@@ -152,13 +149,59 @@ func EnrichSearchResultsImageInfo(
 	}
 
 	for _, r := range results {
-		if r.ImageInfo != "" {
-			continue
-		}
 		if merged, ok := infoMap[r.ID]; ok {
-			r.ImageInfo = merged
+			r.ImageInfo = mergeImageInfoJSON(r.ImageInfo, merged)
 		}
 	}
+}
+
+// mergeImageInfoJSON preserves the parser-trusted primary image set and only
+// fills caption/OCR fields for matching child metadata.
+func mergeImageInfoJSON(primary string, enrichment string) string {
+	var primaryInfos []types.ImageInfo
+	if primary != "" {
+		_ = json.Unmarshal([]byte(primary), &primaryInfos)
+	}
+	if len(primaryInfos) == 0 {
+		return ""
+	}
+	var enrichmentInfos []types.ImageInfo
+	if enrichment != "" {
+		_ = json.Unmarshal([]byte(enrichment), &enrichmentInfos)
+	}
+
+	enrichmentByKey := make(map[string]types.ImageInfo)
+	for _, info := range enrichmentInfos {
+		key := info.URL
+		if key == "" {
+			key = info.OriginalURL
+		}
+		if key != "" {
+			enrichmentByKey[key] = info
+		}
+	}
+
+	for index, primaryInfo := range primaryInfos {
+		key := primaryInfo.URL
+		if key == "" {
+			key = primaryInfo.OriginalURL
+		}
+		enrichmentInfo, ok := enrichmentByKey[key]
+		if !ok {
+			continue
+		}
+		if enrichmentInfo.Caption != "" {
+			primaryInfos[index].Caption = enrichmentInfo.Caption
+		}
+		if enrichmentInfo.OCRText != "" {
+			primaryInfos[index].OCRText = enrichmentInfo.OCRText
+		}
+	}
+	data, err := json.Marshal(primaryInfos)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // MergeImageInfoJSON combines per-chunk image_info JSON strings (from

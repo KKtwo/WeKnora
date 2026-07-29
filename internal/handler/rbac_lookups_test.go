@@ -374,10 +374,15 @@ func TestKBCreatorLookupFromKBPath_OwnerMatchReturnsCreatorID(t *testing.T) {
 type stubChunkService struct {
 	interfaces.ChunkService
 	getByIDOnly func(ctx context.Context, id string) (*types.Chunk, error)
+	repo        interfaces.ChunkRepository
 }
 
 func (s *stubChunkService) GetChunkByIDOnly(ctx context.Context, id string) (*types.Chunk, error) {
 	return s.getByIDOnly(ctx, id)
+}
+
+func (s *stubChunkService) GetRepository() interfaces.ChunkRepository {
+	return s.repo
 }
 
 // newChunkIDLookupCtx is the gin.Context shape for routes that address
