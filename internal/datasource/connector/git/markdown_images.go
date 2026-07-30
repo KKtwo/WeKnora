@@ -154,11 +154,27 @@ func (c *Connector) gitBlobSize(
 	if err != nil {
 		return 0, fmt.Errorf("read Git image size: %w", err)
 	}
-	size, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid Git image size: %w", err)
+	return parseGitBlobSize(raw)
+}
+
+func parseGitBlobSize(raw []byte) (int64, error) {
+	// The command runner combines stdout and stderr. Git auto-gc can therefore
+	// prepend housekeeping notices before the numeric cat-file result.
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		value := strings.TrimSpace(lines[index])
+		if value == "" || strings.IndexFunc(value, func(character rune) bool {
+			return character < '0' || character > '9'
+		}) >= 0 {
+			continue
+		}
+		size, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid Git image size: %w", err)
+		}
+		return size, nil
 	}
-	return size, nil
+	return 0, fmt.Errorf("invalid Git image size: missing numeric output")
 }
 
 func gitImageDataURI(mimeType, sourcePath string, imageData []byte) string {

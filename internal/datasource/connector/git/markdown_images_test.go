@@ -183,6 +183,16 @@ func TestGitImageDataURIRejectsSourcePathsOutsideResolverContract(t *testing.T) 
 	))
 }
 
+func TestParseGitBlobSizeIgnoresAutoGCNotice(t *testing.T) {
+	size, err := parseGitBlobSize([]byte(
+		"Auto packing the repository in background for optimum performance.\n" +
+			"See \"git help gc\" for manual housekeeping.\n262077\n",
+	))
+
+	require.NoError(t, err)
+	require.EqualValues(t, 262077, size)
+}
+
 func TestConnectorRefetchesMarkdownWhenReferencedImageChanges(t *testing.T) {
 	allowTestGitHost(t)
 	const documentPath = "docs/guide.md"
