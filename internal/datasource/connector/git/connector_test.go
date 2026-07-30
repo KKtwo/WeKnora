@@ -62,11 +62,11 @@ func TestConnectorSkipsHiddenFilesAndDirectories(t *testing.T) {
 	runner := &fakeGitRunner{
 		commit: "commit-a",
 		files: map[string]fakeGitFile{
-			"docs/项目档案.md":              {blob: "blob-main", content: "# 主文档"},
-			"docs/.项目档案.overview.md":    {blob: "blob-ov", content: "# 文档概览"},
-			"docs/.项目档案.abstract.md":    {blob: "blob-ab", content: "# 摘要"},
-			"docs/.hidden/nested.md":    {blob: "blob-hd", content: "# 隐藏目录"},
-			".github/CONTRIBUTING.md":   {blob: "blob-gh", content: "# 贡献指南"},
+			"docs/项目档案.md":            {blob: "blob-main", content: "# 主文档"},
+			"docs/.项目档案.overview.md":  {blob: "blob-ov", content: "# 文档概览"},
+			"docs/.项目档案.abstract.md":  {blob: "blob-ab", content: "# 摘要"},
+			"docs/.hidden/nested.md":  {blob: "blob-hd", content: "# 隐藏目录"},
+			".github/CONTRIBUTING.md": {blob: "blob-gh", content: "# 贡献指南"},
 		},
 	}
 	connector := newConnector(runner)
@@ -245,6 +245,7 @@ func resourceIDs(items []types.Resource) []string {
 type fakeGitFile struct {
 	blob    string
 	content string
+	size    int64
 }
 
 type fakeGitRunner struct {
@@ -285,6 +286,19 @@ func (r *fakeGitRunner) Run(_ context.Context, env []string, args ...string) ([]
 			fmt.Fprintf(&b, "100644 blob %s\t%s%c", file.blob, path, byte(0))
 		}
 		return []byte(b.String()), nil
+	case strings.Contains(joined, "cat-file -s"):
+		blob := args[len(args)-1]
+		for _, file := range r.files {
+			if file.blob != blob {
+				continue
+			}
+			size := file.size
+			if size == 0 {
+				size = int64(len(file.content))
+			}
+			return []byte(fmt.Sprintf("%d\n", size)), nil
+		}
+		return nil, fmt.Errorf("missing fake git blob %s", blob)
 	case strings.Contains(joined, "show HEAD:"):
 		spec := args[len(args)-1]
 		path := strings.TrimPrefix(spec, "HEAD:")

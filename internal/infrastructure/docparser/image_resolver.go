@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 
@@ -330,7 +332,7 @@ func sniffImageMime(data []byte) string {
 
 // imgHTMLDataURI matches HTML <img> tags with inline data:image/*;base64,... in the src attribute.
 var imgHTMLDataURI = regexp.MustCompile(
-	`(?i)<img\s[^>]*?src\s*=\s*["'](data:image/[^;]+;base64,[^"']+)["'][^>]*?/?\s*>`,
+	`(?i)<img\s[^>]*?src\s*=\s*["'](data:image/[^;]+(?:;[^;,"'\s]+)*;base64,[^"']+)["'][^>]*?/?\s*>`,
 )
 
 var imgHTMLRelativeSrc = regexp.MustCompile(
@@ -358,7 +360,7 @@ func (r *ImageResolver) ResolveHTMLDataURIImages(
 		}
 		m := matches[i]
 		dataURI := markdown[m[2]:m[3]]
-		mimeType, payload, ok := parseImageDataURI(dataURI)
+		mimeType, payload, sourceRef, _, ok := parseImageDataURI(dataURI)
 		if !ok {
 			continue
 		}
@@ -388,8 +390,12 @@ func (r *ImageResolver) ResolveHTMLDataURIImages(
 			log.Printf("WARN: failed to save HTML img data URI image: %v", saveErr)
 			continue
 		}
+		originalRef := "html-img-data-uri"
+		if sourceRef != "" {
+			originalRef = sourceRef
+		}
 		images = append(images, StoredImage{
-			OriginalRef: "html-img-data-uri",
+			OriginalRef: originalRef,
 			ServingURL:  servingURL,
 			MimeType:    mimeType,
 		})
@@ -647,28 +653,68 @@ var imgMarkdownPattern = regexp.MustCompile(`!\[(.*?)\]\(([^()\s]*(?:\([^)]*\)[^
 // The alt-text group uses .*? (non-greedy) to allow literal ] inside alt text
 // (e.g. file paths like ![C:\img]name.png](data:...)).
 var imgMarkdownDataURI = regexp.MustCompile(
-	`!\[(.*?)\]\((?i:(data:image/[^;]+;base64,\s*[^)]+))\)`,
+	`!\[(.*?)\]\((?i:(data:image/[^;\s]+(?:;[^;,\s]+)*;base64,\s*[A-Za-z0-9+/=_-]+))` +
+		`(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\)`,
 )
 
 // parseImageDataURI splits a data URI into image MIME type and base64 payload.
-func parseImageDataURI(dataURI string) (mimeType string, b64Payload string, ok bool) {
+func parseImageDataURI(
+	dataURI string,
+) (mimeType string, b64Payload string, sourceRef string, sourceMarked bool, ok bool) {
 	const sep = ";base64,"
 	idx := strings.Index(strings.ToLower(dataURI), sep)
 	if idx < 0 {
-		return "", "", false
+		return "", "", "", false, false
 	}
 	meta := strings.TrimSpace(dataURI[:idx])
-	const prefix = "data:image/"
+	const prefix = "data:"
 	if len(meta) < len(prefix) || !strings.EqualFold(meta[:len(prefix)], prefix) {
-		return "", "", false
+		return "", "", "", false, false
 	}
-	sub := strings.TrimSpace(meta[len(prefix):])
-	mimeType = "image/" + strings.ToLower(sub)
+	parts := strings.Split(meta[len(prefix):], ";")
+	mimeType = strings.ToLower(strings.TrimSpace(parts[0]))
+	if !strings.HasPrefix(mimeType, "image/") {
+		return "", "", "", false, false
+	}
+	for _, parameter := range parts[1:] {
+		key, value, found := strings.Cut(parameter, "=")
+		if !found || !strings.EqualFold(strings.TrimSpace(key), "weknora-source") {
+			continue
+		}
+		sourceMarked = true
+		value = strings.TrimSpace(value)
+		if len(value) > 4096 {
+			continue
+		}
+		decoded, decodeErr := base64.RawURLEncoding.DecodeString(value)
+		if decodeErr == nil && validEmbeddedImageSourceRef(string(decoded)) {
+			sourceRef = string(decoded)
+		}
+	}
 	b64Payload = strings.TrimSpace(dataURI[idx+len(sep):])
 	if b64Payload == "" {
-		return "", "", false
+		return "", "", "", false, false
 	}
-	return mimeType, b64Payload, true
+	return mimeType, b64Payload, sourceRef, sourceMarked, true
+}
+
+func validEmbeddedImageSourceRef(sourceRef string) bool {
+	if sourceRef == "" || len(sourceRef) > 2048 || !utf8.ValidString(sourceRef) ||
+		strings.HasPrefix(sourceRef, "/") || strings.Contains(sourceRef, "\\") {
+		return false
+	}
+	for _, character := range sourceRef {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	parsed, err := url.Parse(sourceRef)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" {
+		return false
+	}
+	cleaned := path.Clean(sourceRef)
+	return cleaned == sourceRef && cleaned != "." && cleaned != ".." &&
+		!strings.HasPrefix(cleaned, "../")
 }
 
 // ResolveDataURIImages finds embedded data:image/*;base64 images in markdown,
@@ -696,7 +742,7 @@ func (r *ImageResolver) ResolveDataURIImages(
 			continue
 		}
 		dataURI := markdown[m[4]:m[5]]
-		mimeType, payload, ok := parseImageDataURI(dataURI)
+		mimeType, payload, sourceRef, sourceMarked, ok := parseImageDataURI(dataURI)
 		if !ok {
 			continue
 		}
@@ -727,8 +773,15 @@ func (r *ImageResolver) ResolveDataURIImages(
 			log.Printf("WARN: failed to save data URI image: %v", saveErr)
 			continue
 		}
+		originalRef := dataURI
+		if sourceMarked {
+			originalRef = "embedded-image-data-uri"
+			if sourceRef != "" {
+				originalRef = sourceRef
+			}
+		}
 		images = append(images, StoredImage{
-			OriginalRef: dataURI,
+			OriginalRef: originalRef,
 			ServingURL:  servingURL,
 			MimeType:    mimeType,
 		})

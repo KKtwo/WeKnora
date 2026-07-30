@@ -125,7 +125,8 @@ func (c *Connector) FetchAll(
 	if err != nil {
 		return nil, err
 	}
-	return c.materializeItems(ctx, state, files, selectedRoot, cfg.MaxFileBytes)
+	items, _, err := c.materializeItems(ctx, state, files, selectedRoot, cfg.MaxFileBytes)
+	return items, err
 }
 
 func (c *Connector) FetchIncremental(
@@ -156,14 +157,30 @@ func (c *Connector) FetchIncremental(
 		}
 	} else {
 		for filePath, blob := range currentFiles {
-			if previous.Files[filePath] != blob {
+			_, dependenciesRecorded := previous.ImageDependencies[filePath]
+			if previous.Files[filePath] != blob ||
+				(isMarkdownPath(filePath) && (!dependenciesRecorded ||
+					imageDependenciesChanged(previous.ImageDependencies[filePath], state.files))) {
 				changed[filePath] = blob
 			}
 		}
 	}
-	items, err := c.materializeItems(ctx, state, changed, selectedRoot, cfg.MaxFileBytes)
+	items, changedDependencies, err := c.materializeItems(
+		ctx, state, changed, selectedRoot, cfg.MaxFileBytes,
+	)
 	if err != nil {
 		return nil, nil, err
+	}
+	currentDependencies := make(map[string]map[string]string)
+	if previous != nil {
+		for filePath, dependencies := range previous.ImageDependencies {
+			if _, exists := currentFiles[filePath]; exists {
+				currentDependencies[filePath] = dependencies
+			}
+		}
+	}
+	for filePath, dependencies := range changedDependencies {
+		currentDependencies[filePath] = dependencies
 	}
 
 	if previous != nil {
@@ -188,9 +205,10 @@ func (c *Connector) FetchIncremental(
 	}
 
 	nextCursor := encodeCursor(gitCursor{
-		Commit:       state.commit,
-		SelectedRoot: selectedRoot,
-		Files:        currentFiles,
+		Commit:            state.commit,
+		SelectedRoot:      selectedRoot,
+		Files:             currentFiles,
+		ImageDependencies: currentDependencies,
 	})
 	nextCursor.LastSyncTime = time.Now().UTC()
 	return items, nextCursor, nil
@@ -365,7 +383,7 @@ func (c *Connector) materializeItems(
 	files map[string]string,
 	selectedRoot string,
 	maxFileBytes int64,
-) ([]types.FetchedItem, error) {
+) ([]types.FetchedItem, map[string]map[string]string, error) {
 	paths := make([]string, 0, len(files))
 	for filePath := range files {
 		paths = append(paths, filePath)
@@ -373,6 +391,7 @@ func (c *Connector) materializeItems(
 	sort.Strings(paths)
 
 	items := make([]types.FetchedItem, 0, len(paths))
+	imageDependencies := make(map[string]map[string]string)
 	for _, filePath := range paths {
 		content, err := c.runner.Run(
 			ctx,
@@ -381,10 +400,18 @@ func (c *Connector) materializeItems(
 			"show", "HEAD:"+filePath,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("read Git file %s: %w", filePath, err)
+			return nil, nil, fmt.Errorf("read Git file %s: %w", filePath, err)
 		}
 		if int64(len(content)) > maxFileBytes {
-			return nil, fmt.Errorf("Git file exceeds maximum size: %s", filePath)
+			return nil, nil, fmt.Errorf("Git file exceeds maximum size: %s", filePath)
+		}
+		if isMarkdownPath(filePath) {
+			content, imageDependencies[filePath], err = c.embedMarkdownImages(
+				ctx, state, filePath, content, maxFileBytes,
+			)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		items = append(items, types.FetchedItem{
 			ExternalID: filePath,
@@ -402,7 +429,7 @@ func (c *Connector) materializeItems(
 			},
 		})
 	}
-	return items, nil
+	return items, imageDependencies, nil
 }
 
 func resourcesAt(

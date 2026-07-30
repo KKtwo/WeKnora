@@ -44,9 +44,10 @@ type Config struct {
 }
 
 type gitCursor struct {
-	Commit       string            `json:"commit"`
-	SelectedRoot string            `json:"selected_root,omitempty"`
-	Files        map[string]string `json:"files"`
+	Commit            string                       `json:"commit"`
+	SelectedRoot      string                       `json:"selected_root,omitempty"`
+	Files             map[string]string            `json:"files"`
+	ImageDependencies map[string]map[string]string `json:"image_dependencies,omitempty"`
 }
 
 func parseConfig(config *types.DataSourceConfig) (*Config, error) {
