@@ -9,6 +9,14 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+const (
+	maxMergeWorkers    = 4
+	maxMergeCandidates = 200
+)
+
+// mergeWorkSlots bounds CPU-heavy merge work across all requests in the process.
+var mergeWorkSlots = make(chan struct{}, maxMergeWorkers)
+
 // PluginMerge handles merging of search result chunks
 type PluginMerge struct {
 	chunkRepo    interfaces.ChunkRepository
@@ -44,6 +52,9 @@ func (p *PluginMerge) ActivationEvents() []types.EventType {
 func (p *PluginMerge) OnEvent(ctx context.Context,
 	eventType types.EventType, chatManage *types.ChatManage, next func() *PluginError,
 ) *PluginError {
+	if err := mergeContextError(ctx); err != nil {
+		return err
+	}
 	if !chatManage.NeedsRetrieval() {
 		return next()
 	}
@@ -57,6 +68,9 @@ func (p *PluginMerge) OnEvent(ctx context.Context,
 
 	// Step 2: Initial dedup
 	searchResult = p.dedup(ctx, "dedup_summary", searchResult)
+	// Cap only after cheap exact dedup so duplicate high-score rows cannot
+	// crowd distinct candidates out of the bounded merge window.
+	searchResult = limitMergeCandidates(ctx, searchResult, chatManage.RerankTopK)
 
 	// Step 3: Inject history references
 	searchResult = p.injectHistoryResults(ctx, chatManage, searchResult)
@@ -75,25 +89,92 @@ func (p *PluginMerge) OnEvent(ctx context.Context,
 
 	// Step 4: Resolve parent chunks
 	searchResult = p.resolveParentChunks(ctx, chatManage, searchResult)
+	if err := mergeContextError(ctx); err != nil {
+		return err
+	}
 
 	// Step 5: Group by knowledge/chunkType and merge overlapping ranges
 	mergedChunks := p.groupAndMergeOverlapping(ctx, searchResult)
+	if err := mergeContextError(ctx); err != nil {
+		return err
+	}
 
 	// Step 6: Populate FAQ answers
 	mergedChunks = p.populateFAQAnswers(ctx, chatManage, mergedChunks)
+	if err := mergeContextError(ctx); err != nil {
+		return err
+	}
 
 	// Step 7: Expand short contexts
 	mergedChunks = p.expandShortContextWithNeighbors(ctx, chatManage, mergedChunks)
+	if err := mergeContextError(ctx); err != nil {
+		return err
+	}
 
 	// Step 7.5: Re-merge overlapping ranges introduced by expansion
 	mergedChunks = p.groupAndMergeOverlapping(ctx, mergedChunks)
+	if err := mergeContextError(ctx); err != nil {
+		return err
+	}
 
 	// Step 8: Final dedup — catches exact duplicates plus partial content overlaps
 	mergedChunks = p.dedup(ctx, "final_dedup", mergedChunks)
-	mergedChunks = removePartialOverlaps(ctx, mergedChunks)
+	mergedChunks = limitMergeCandidates(ctx, mergedChunks, chatManage.RerankTopK)
+	mergedChunks = withMergeWorkSlot(ctx, func() []*types.SearchResult {
+		return removePartialOverlaps(ctx, mergedChunks)
+	})
+	if err := mergeContextError(ctx); err != nil {
+		return err
+	}
 
 	chatManage.MergeResult = mergedChunks
 	return next()
+}
+
+// mergeContextError maps request cancellation to the existing retrieval error contract.
+func mergeContextError(ctx context.Context) *PluginError {
+	if err := ctx.Err(); err != nil {
+		return ErrSearch.WithError(err)
+	}
+	return nil
+}
+
+// limitMergeCandidates keeps enough headroom for final TopK while placing a hard
+// upper bound on the quadratic overlap pass. Results are ordered by score only
+// when truncation is necessary, preserving the existing fast path otherwise.
+func limitMergeCandidates(
+	ctx context.Context,
+	results []*types.SearchResult,
+	rerankTopK int,
+) []*types.SearchResult {
+	limit := min(maxMergeCandidates, max(100, rerankTopK*4))
+	if len(results) <= limit {
+		return results
+	}
+	capped := append([]*types.SearchResult(nil), results...)
+	// Reuse the final TopK order, including all tie-breakers, so truncation is
+	// deterministic even when concurrent retrieval changes the input order.
+	sortSearchResultsDeterministically(capped)
+	pipelineWarn(ctx, "Merge", "candidate_cap", map[string]interface{}{
+		"before": len(results),
+		"after":  limit,
+	})
+	return capped[:limit]
+}
+
+// withMergeWorkSlot bounds CPU-heavy work across all requests while allowing
+// callers waiting for capacity to stop immediately on request cancellation.
+func withMergeWorkSlot[T any](ctx context.Context, work func() T) (zero T) {
+	select {
+	case mergeWorkSlots <- struct{}{}:
+		defer func() { <-mergeWorkSlots }()
+	case <-ctx.Done():
+		return zero
+	}
+	if ctx.Err() != nil {
+		return zero
+	}
+	return work()
 }
 
 // selectInputResults picks rerank results if available, falling back to search
@@ -174,26 +255,28 @@ func (p *PluginMerge) groupAndMergeOverlapping(ctx context.Context, results []*t
 		}
 	}
 
-	groupResults := ParallelMap(units, 0, func(_ int, u mergeUnit) []*types.SearchResult {
-		pipelineInfo(ctx, "Merge", "group_process", map[string]interface{}{
-			"knowledge_id": u.knowledgeID,
-			"chunk_cnt":    len(u.chunks),
-		})
+	groupResults := ParallelMap(units, maxMergeWorkers, func(_ int, u mergeUnit) []*types.SearchResult {
+		return withMergeWorkSlot(ctx, func() []*types.SearchResult {
+			pipelineInfo(ctx, "Merge", "group_process", map[string]interface{}{
+				"knowledge_id": u.knowledgeID,
+				"chunk_cnt":    len(u.chunks),
+			})
 
-		sort.Slice(u.chunks, func(i, j int) bool {
-			if u.chunks[i].StartAt == u.chunks[j].StartAt {
-				return u.chunks[i].EndAt < u.chunks[j].EndAt
-			}
-			return u.chunks[i].StartAt < u.chunks[j].StartAt
-		})
+			sort.Slice(u.chunks, func(i, j int) bool {
+				if u.chunks[i].StartAt == u.chunks[j].StartAt {
+					return u.chunks[i].EndAt < u.chunks[j].EndAt
+				}
+				return u.chunks[i].StartAt < u.chunks[j].StartAt
+			})
 
-		grouped := p.mergeOverlappingChunks(ctx, u.knowledgeID, u.chunks)
+			grouped := p.mergeOverlappingChunks(ctx, u.knowledgeID, u.chunks)
 
-		pipelineInfo(ctx, "Merge", "group_output", map[string]interface{}{
-			"knowledge_id":  u.knowledgeID,
-			"merged_chunks": len(grouped),
+			pipelineInfo(ctx, "Merge", "group_output", map[string]interface{}{
+				"knowledge_id":  u.knowledgeID,
+				"merged_chunks": len(grouped),
+			})
+			return grouped
 		})
-		return grouped
 	})
 
 	var mergedChunks []*types.SearchResult

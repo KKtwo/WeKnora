@@ -606,11 +606,14 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool) *
 // @Param        request  body      SearchKnowledgeRequest  true  "搜索请求"
 // @Success      200      {object}  map[string]interface{}  "搜索结果"
 // @Failure      400      {object}  errors.AppError         "请求参数错误"
+// @Failure      429      {object}  errors.AppError         "搜索队列已满"
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /sessions/search [post]
 func (h *Handler) SearchKnowledge(c *gin.Context) {
-	ctx := logger.CloneContext(c.Request.Context())
+	// This endpoint is synchronous: keep the HTTP cancellation signal attached so
+	// retrieval and CPU-heavy merge work stop when the caller disconnects.
+	ctx := c.Request.Context()
 	logger.Info(ctx, "Start processing knowledge search request")
 
 	// Parse request body
@@ -695,6 +698,18 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 		len(tagScopes),
 		secutils.SanitizeForLog(request.Query),
 	)
+
+	// Central admission belongs at the WeKnora process boundary so all callers
+	// share one capacity budget while disconnected queued requests exit quickly.
+	releaseSearch, err := sessionSearchAdmission.acquire(ctx)
+	if err != nil {
+		if err == errSearchQueueFull {
+			c.Header("Retry-After", "1")
+			c.Error(errors.NewTooManyRequestsError(err.Error()))
+		}
+		return
+	}
+	defer releaseSearch()
 
 	// Directly call knowledge retrieval service without LLM summarization
 	searchResults, err := h.sessionService.SearchKnowledge(ctx, knowledgeBaseIDs, request.KnowledgeIDs, tagScopes, request.Query)
