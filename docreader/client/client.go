@@ -13,12 +13,13 @@ import (
 )
 
 func getMaxMessageSize() int {
-	if sizeStr := os.Getenv("MAX_FILE_SIZE_MB"); sizeStr != "" {
+	// Keep standalone clients aligned with the app-to-DocReader transport.
+	if sizeStr := os.Getenv("DOCREADER_GRPC_MAX_FILE_SIZE_MB"); sizeStr != "" {
 		if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
 			return size * 1024 * 1024
 		}
 	}
-	return 50 * 1024 * 1024
+	return 101 * 1024 * 1024
 }
 
 var Logger = log.New(os.Stdout, "[DocReader] ", log.LstdFlags|log.Lmicroseconds)

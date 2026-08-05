@@ -296,6 +296,8 @@ services:
       - JWT_SECRET=${JWT_SECRET:-}
       # File size limit (in MB)
       - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
+      # 101 MiB leaves protobuf overhead for Git files whose business limit is 100 MiB.
+      - DOCREADER_GRPC_MAX_FILE_SIZE_MB=${DOCREADER_GRPC_MAX_FILE_SIZE_MB:-101}
       # 文档处理任务总超时（Go duration，默认 2h）
       - WEKNORA_DOCUMENT_PROCESS_TIMEOUT=${WEKNORA_DOCUMENT_PROCESS_TIMEOUT:-}
       # 单次 DocReader RPC 超时（默认 30m，须小于上一项）
@@ -411,7 +413,7 @@ services:
       - GRPC_AUTH_TOKEN=${GRPC_AUTH_TOKEN:-}
       # ========== gRPC 服务参数 ==========
       - DOCREADER_GRPC_MAX_WORKERS=${DOCREADER_GRPC_MAX_WORKERS:-4}
-      - DOCREADER_GRPC_MAX_FILE_SIZE_MB=${DOCREADER_GRPC_MAX_FILE_SIZE_MB:-${MAX_FILE_SIZE_MB:-50}}
+      - DOCREADER_GRPC_MAX_FILE_SIZE_MB=${DOCREADER_GRPC_MAX_FILE_SIZE_MB:-101}
       - DOCREADER_GRPC_PORT=${DOCREADER_GRPC_PORT:-50051}
       # ========== 解析通用 ==========
       - DOCREADER_DOCX_MAX_PAGES=${DOCREADER_DOCX_MAX_PAGES:-0}

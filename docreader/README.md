@@ -14,6 +14,7 @@ docreader:
     - MINIO_PUBLIC_ENDPOINT=http://localhost:${MINIO_PORT:-9000}
     - MINERU_ENDPOINT=${MINERU_ENDPOINT:-}
     - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-}
+    - DOCREADER_GRPC_MAX_FILE_SIZE_MB=${DOCREADER_GRPC_MAX_FILE_SIZE_MB:-101}
 ```
 
 ### 环境变量说明
@@ -61,7 +62,7 @@ docreader:
 
 - **说明**: 允许上传的最大文件大小（单位：MB）
 - **默认值**: `50` MB
-- **用途**: 限制 gRPC 服务接收的文件大小，防止过大的文件导致服务崩溃或性能问题
+- **用途**: 限制手工上传文件大小；不控制 DocReader gRPC 传输上限
 - **配置示例**:
   ```bash
   # .env 文件
@@ -70,11 +71,12 @@ docreader:
 
 ## 其他可配置的环境变量
 
-除了 docker-compose.yml 中已配置的变量外，DocReader 还支持以下环境变量（可根据需要添加）：
+DocReader 还支持以下环境变量：
 
 ### gRPC 配置
 
 - `DOCREADER_GRPC_MAX_WORKERS`: gRPC 服务的最大工作线程数（默认：4）
+- `DOCREADER_GRPC_MAX_FILE_SIZE_MB`: gRPC 单条消息大小上限（默认：101 MiB，为 100 MiB Git 文件预留协议开销）
 - `DOCREADER_GRPC_PORT`: gRPC 服务监听端口（默认：50051）
 
 ### 解析器资源控制
@@ -199,7 +201,8 @@ docreader:
 
 ### 3. 文件上传失败？
 
-检查 `MAX_FILE_SIZE_MB` 配置，确保限制足够大。同时需要确保前端和后端服务的文件大小限制保持一致。
+手工上传失败时检查 `MAX_FILE_SIZE_MB`；Git 同步或解析传输失败时检查
+`DOCREADER_GRPC_MAX_FILE_SIZE_MB`。后者默认 101 MiB，客户端与服务端必须保持一致。
 
 ## 服务健康检查
 

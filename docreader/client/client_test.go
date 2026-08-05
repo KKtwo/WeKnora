@@ -16,6 +16,24 @@ func init() {
 	log.Println("INFO: Initializing DocReader client tests")
 }
 
+func TestGetMaxMessageSizeDefaultsTo101MiB(t *testing.T) {
+	t.Setenv("DOCREADER_GRPC_MAX_FILE_SIZE_MB", "")
+	t.Setenv("MAX_FILE_SIZE_MB", "50")
+
+	if got, want := getMaxMessageSize(), 101*1024*1024; got != want {
+		t.Fatalf("getMaxMessageSize() = %d, want %d", got, want)
+	}
+}
+
+func TestGetMaxMessageSizePrefersDocReaderLimit(t *testing.T) {
+	t.Setenv("DOCREADER_GRPC_MAX_FILE_SIZE_MB", "101")
+	t.Setenv("MAX_FILE_SIZE_MB", "50")
+
+	if got, want := getMaxMessageSize(), 101*1024*1024; got != want {
+		t.Fatalf("getMaxMessageSize() = %d, want %d", got, want)
+	}
+}
+
 func TestReadURL(t *testing.T) {
 	client, err := NewClient("localhost:50051")
 	if err != nil {

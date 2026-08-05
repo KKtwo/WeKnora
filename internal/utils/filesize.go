@@ -10,17 +10,20 @@ import (
 //
 // MAX_FILE_SIZE_MB is intentionally a deploy-time-only knob (NOT a
 // runtime system_setting). The effective upload limit is gated by
-// three other layers that all read this env at startup and cache the
-// value:
+// two other layers that read this env at startup and cache the value:
 //   - frontend nginx client_max_body_size (envsubst into nginx.conf)
-//   - docreader gRPC max_send/recv_message_length
 //   - frontend client-side check via window.__RUNTIME_CONFIG__
+//
+// The DocReader transport has a separate 101 MiB default controlled by
+// DOCREADER_GRPC_MAX_FILE_SIZE_MB so Git sync can accept larger files without
+// widening browser and manual-upload entry points. The extra 1 MiB covers
+// protobuf framing for the 100 MiB Git file limit.
 //
 // Surfacing a SystemAdmin UI knob whose effect is silently capped by
 // any of the above would mislead operators ("I raised it to 200MB but
-// nginx still returns 413"). Until all four layers can be reconfigured
-// in lockstep without container restarts, every call site must read
-// the env directly via this helper.
+// nginx still returns 413"). Until all three upload layers can be reconfigured
+// in lockstep without container restarts, every call site must read the env
+// directly via this helper.
 func GetMaxFileSize() int64 {
 	if sizeStr := os.Getenv("MAX_FILE_SIZE_MB"); sizeStr != "" {
 		if size, err := strconv.ParseInt(sizeStr, 10, 64); err == nil && size > 0 {

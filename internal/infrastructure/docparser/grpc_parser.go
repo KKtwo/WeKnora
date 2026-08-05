@@ -20,12 +20,14 @@ import (
 )
 
 func getMaxMessageSize() int {
-	if sizeStr := os.Getenv("MAX_FILE_SIZE_MB"); sizeStr != "" {
+	// The transport is independent of the manual upload limit. Its 101 MiB
+	// default leaves protobuf framing room for a 100 MiB Git file.
+	if sizeStr := os.Getenv("DOCREADER_GRPC_MAX_FILE_SIZE_MB"); sizeStr != "" {
 		if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
 			return size * 1024 * 1024
 		}
 	}
-	return 50 * 1024 * 1024
+	return 101 * 1024 * 1024
 }
 
 // GRPCDocumentReader implements DocumentReader over gRPC.

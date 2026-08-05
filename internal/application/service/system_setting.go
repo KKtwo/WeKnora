@@ -103,21 +103,21 @@ var registry = map[string]settingSpec{
 	// NOTE: file.max_size_mb is intentionally NOT registered. Although
 	// the Go upload handlers accept a runtime override via
 	// systemSettingSvc.GetInt, the actual upload limit is gated end-to-end
-	// by three independent layers:
+	// by two independent layers outside the Go handler:
 	//   1. nginx client_max_body_size (templated at container startup
 	//      from the MAX_FILE_SIZE_MB env var; envsubst writes the
 	//      computed value into nginx.conf; nginx is never reloaded
 	//      during the container's lifetime).
-	//   2. docreader gRPC max_send/recv_message_length (read from the
-	//      MAX_FILE_SIZE_MB env at python startup).
-	//   3. The frontend client-side check (utils/index.ts) reads
+	//   2. The frontend client-side check (utils/index.ts) reads
 	//      window.__RUNTIME_CONFIG__.MAX_FILE_SIZE_MB which is
 	//      written into /usr/share/nginx/html/config.js by the
 	//      docker-entrypoint at container start.
-	// Surfacing a UI knob whose effect is silently capped by nginx /
-	// docreader / the in-page bundle is worse than not having it.
-	// Keep MAX_FILE_SIZE_MB as a deploy-time env var until all four
-	// layers can be reconfigured in lockstep without restarts.
+	// DocReader transport capacity is configured independently through
+	// DOCREADER_GRPC_MAX_FILE_SIZE_MB and is not an upload authorization gate.
+	// Surfacing a UI knob whose effect is silently capped by nginx or the
+	// in-page bundle is worse than not having it. Keep MAX_FILE_SIZE_MB as a
+	// deploy-time env var until all three upload layers can be reconfigured in
+	// lockstep without restarts.
 	"ssrf.whitelist": {
 		Type:     "string_list",
 		EnvName:  "SSRF_WHITELIST",

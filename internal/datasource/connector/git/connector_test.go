@@ -191,6 +191,17 @@ func TestConnectorHonorsConfiguredMaximumFileSize(t *testing.T) {
 	require.ErrorContains(t, err, "exceeds maximum size")
 }
 
+func TestConnectorDefaultsMaximumFileSizeTo100MiB(t *testing.T) {
+	allowTestGitHost(t)
+	cfg, err := parseConfig(gitDataSourceConfig(map[string]interface{}{
+		"repo_url": "https://example.test/team/docs.git",
+		"branch":   "main",
+	}))
+
+	require.NoError(t, err)
+	require.Equal(t, int64(100*1024*1024), cfg.MaxFileBytes)
+}
+
 func TestConnectorKeepsHTTPSCredentialsOutOfGitArguments(t *testing.T) {
 	allowTestGitHost(t)
 	runner := &fakeGitRunner{commit: "commit-auth"}

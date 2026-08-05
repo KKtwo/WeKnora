@@ -17,7 +17,7 @@ import (
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
-const defaultMaxFileBytes int64 = 50 * 1024 * 1024
+const defaultMaxFileBytes int64 = 100 * 1024 * 1024
 
 var (
 	scpRepoPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+@([A-Za-z0-9.-]+):(.+)$`)

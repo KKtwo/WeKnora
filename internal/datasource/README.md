@@ -77,6 +77,7 @@ the sync cursor, so later runs emit only created, changed, and deleted files.
 
 - Non-secret settings: `repo_url`, `branch`, optional `path`,
   `include_extensions`, `max_file_bytes`.
+- `max_file_bytes` defaults to 100 MiB and accepts explicit values up to 100 MiB.
 - Optional latest-version selection: set both `latest_parent` and
   `latest_pattern` (for example `versions` and `version-*`).
 - HTTPS credentials: optional `username` and `token`.

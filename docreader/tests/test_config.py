@@ -6,6 +6,25 @@ from docreader import config
 
 
 class DocReaderConfigTest(unittest.TestCase):
+    def test_grpc_max_file_size_defaults_to_101_mb(self):
+        with patch.dict(os.environ, {"MAX_FILE_SIZE_MB": "50"}, clear=True):
+            cfg = config.load_config()
+
+        self.assertEqual(cfg.grpc_max_file_size_mb, 101 * 1024 * 1024)
+
+    def test_grpc_max_file_size_uses_dedicated_limit(self):
+        with patch.dict(
+            os.environ,
+            {
+                "DOCREADER_GRPC_MAX_FILE_SIZE_MB": "101",
+                "MAX_FILE_SIZE_MB": "50",
+            },
+            clear=True,
+        ):
+            cfg = config.load_config()
+
+        self.assertEqual(cfg.grpc_max_file_size_mb, 101 * 1024 * 1024)
+
     def test_parser_concurrency_defaults_are_conservative(self):
         with patch.dict(os.environ, {}, clear=True):
             cfg = config.load_config()
