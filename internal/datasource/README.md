@@ -80,6 +80,9 @@ the sync cursor, so later runs emit only created, changed, and deleted files.
 - `max_file_bytes` defaults to 100 MiB and accepts explicit values up to 100 MiB.
 - Optional latest-version selection: set both `latest_parent` and
   `latest_pattern` (for example `versions` and `version-*`).
+- Relative Markdown images are embedded from the document directory or
+  repository root. Images indented once beneath a list item are included;
+  images inside fenced, inline, HTML-comment, or indented code are ignored.
 - HTTPS credentials: optional `username` and `token`.
 - SSH credentials: optional `private_key`; verified `known_hosts` is required.
 - Local paths, `file://`, plain HTTP, unsafe refs, and repository path traversal

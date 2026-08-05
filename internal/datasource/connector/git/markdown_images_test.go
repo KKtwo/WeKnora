@@ -59,6 +59,36 @@ func TestConnectorEmbedsDocumentRelativeAndRepositoryRootImages(t *testing.T) {
 	require.Contains(t, content, "![远程图](https://example.test/remote.png)")
 }
 
+func TestConnectorEmbedsImageIndentedUnderListItem(t *testing.T) {
+	allowTestGitHost(t)
+	image := string([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3})
+	documentPath := "bi_versioned_docs/version-8.3.0/12-GuanCLI 与 GuanMCP/3-个人访问令牌（PAT）使用指南.md"
+	imagePath := "img/bi/85f60854c2e61c25aec9fa67db050567_MD5.jpeg"
+	runner := &fakeGitRunner{
+		commit: "commit-list-image",
+		files: map[string]fakeGitFile{
+			documentPath: {
+				blob:    "blob-doc",
+				content: "1. 点击页面右上角头像，选择「个人访问令牌」。\n\t![](../../../" + imagePath + ")",
+			},
+			imagePath: {blob: "blob-image", content: image},
+		},
+	}
+	connector := newConnector(runner)
+	cfg := gitDataSourceConfig(map[string]interface{}{
+		"repo_url":       "https://example.test/team/docs.git",
+		"branch":         "main",
+		"latest_parent":  "bi_versioned_docs",
+		"latest_pattern": "version-*",
+	})
+
+	items, err := connector.FetchAll(context.Background(), cfg, nil)
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Contains(t, string(items[0].Content), gitImageDataURI("image/png", imagePath, []byte(image)))
+}
+
 func TestConnectorLeavesMarkdownExamplesUntouched(t *testing.T) {
 	allowTestGitHost(t)
 	image := string([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1})
