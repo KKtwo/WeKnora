@@ -2237,7 +2237,7 @@ func (h *InitializationHandler) TestMultimodalFunction(c *gin.Context) {
 		return
 	}
 
-	// 验证文件大小 — MAX_FILE_SIZE_MB env (50MB 默认)。
+	// 验证文件大小 — MAX_FILE_SIZE_MB env (100MB 默认)。
 	// 见 utils/filesize.go 注释：故意保留为部署期 env，不做 runtime setting。
 	maxSizeMB := utils.GetMaxFileSizeMB()
 	maxSize := maxSizeMB * 1024 * 1024

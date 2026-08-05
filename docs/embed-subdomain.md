@@ -56,7 +56,7 @@ shop.example.com          embed.example.com        app.example.com
 window.__RUNTIME_CONFIG__ = {
   // embed 页面与 widget.js 的源站；留空则使用当前浏览器所在域名
   EMBED_BASE_URL: 'https://embed.example.com',
-  MAX_FILE_SIZE_MB: 50,
+  MAX_FILE_SIZE_MB: 100,
 };
 ```
 

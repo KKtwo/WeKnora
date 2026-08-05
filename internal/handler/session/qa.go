@@ -95,6 +95,12 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		return nil, nil, errors.NewBadRequestError(errors.ErrInvalidSessionID.Error())
 	}
 
+	// Inline attachments are base64 JSON. Cap the encoded request before binding so
+	// direct app calls have the same memory boundary as the frontend Nginx path.
+	maxSizeMB := secutils.GetMaxFileSizeMB()
+	maxSize := maxSizeMB * 1024 * 1024
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, inlineAttachmentRequestLimit(maxSize))
+
 	// Parse request body
 	var request CreateKnowledgeQARequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -193,15 +199,11 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	if len(request.AttachmentUploads) > 0 {
 		logger.Infof(ctx, "[%s] processing %d attachment(s)", logPrefix, len(request.AttachmentUploads))
 
-		// MAX_FILE_SIZE_MB env (50MB default). See utils/filesize.go for
+		// MAX_FILE_SIZE_MB env (100MB default). See utils/filesize.go for
 		// why this is deploy-time-only rather than a runtime setting.
-		maxSizeMB := secutils.GetMaxFileSizeMB()
-		maxSize := maxSizeMB * 1024 * 1024
-		for i, upload := range request.AttachmentUploads {
-			if upload.FileSize > maxSize {
-				return nil, nil, errors.NewBadRequestError(
-					fmt.Sprintf("attachment %d exceeds size limit of %dMB", i+1, maxSizeMB))
-			}
+		decodedAttachments, decodeErr := decodeAttachmentUploads(request.AttachmentUploads, maxSize)
+		if decodeErr != nil {
+			return nil, nil, errors.NewBadRequestError(decodeErr.Error())
 		}
 
 		tenantID := c.GetUint64(types.TenantIDContextKey.String())
@@ -219,17 +221,11 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 
 		for i, upload := range request.AttachmentUploads {
 			wg.Add(1)
-			go func(idx int, att AttachmentUpload) {
+			go func(idx int, att AttachmentUpload, data []byte) {
 				defer wg.Done()
 
-				data, err := DecodeBase64Attachment(att.Data)
-				if err != nil {
-					errChan <- fmt.Errorf("attachment %d decode failed: %w", idx+1, err)
-					return
-				}
-
 				processed, err := h.attachmentProcessor.ProcessAttachment(
-					ctx, data, att.FileName, att.FileSize, tenantID, asrModelID,
+					ctx, data, att.FileName, int64(len(data)), tenantID, asrModelID,
 				)
 				if err != nil {
 					errChan <- fmt.Errorf("attachment %d processing failed: %w", idx+1, err)
@@ -237,7 +233,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 				}
 
 				processedAttachments[idx] = *processed
-			}(i, upload)
+			}(i, upload, decodedAttachments[i])
 		}
 
 		wg.Wait()

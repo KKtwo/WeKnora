@@ -235,7 +235,7 @@ func (p *AttachmentProcessor) processWithDocumentReader(
 	if p.documentReader == nil {
 		return fmt.Errorf("DocumentReader not configured")
 	}
-	
+
 	normalizedType := strings.TrimPrefix(fileType, ".")
 
 	result, err := p.documentReader.Read(ctx, &types.ReadRequest{
@@ -338,4 +338,37 @@ func DecodeBase64Attachment(data string) ([]byte, error) {
 	}
 
 	return nil, fmt.Errorf("base64 decode failed: unrecognised encoding")
+}
+
+func inlineAttachmentRequestLimit(maxFileSize int64) int64 {
+	const mebibyte = int64(1024 * 1024)
+	maxFileSizeMB := (maxFileSize + mebibyte - 1) / mebibyte
+	return ((maxFileSizeMB*4+2)/3 + 1) * mebibyte
+}
+
+// decodeAttachmentUploads verifies decoded bytes instead of trusting the client-reported size.
+// The aggregate cap matches the reverse proxy's single-request budget.
+func decodeAttachmentUploads(uploads []AttachmentUpload, maxSize int64) ([][]byte, error) {
+	decoded := make([][]byte, len(uploads))
+	var totalSize int64
+	for i, upload := range uploads {
+		if upload.FileSize > maxSize {
+			return nil, fmt.Errorf("attachment %d exceeds size limit of %dMB", i+1, maxSize/(1024*1024))
+		}
+
+		data, err := DecodeBase64Attachment(upload.Data)
+		if err != nil {
+			return nil, fmt.Errorf("attachment %d decode failed: %w", i+1, err)
+		}
+		actualSize := int64(len(data))
+		if actualSize > maxSize {
+			return nil, fmt.Errorf("attachment %d exceeds size limit of %dMB", i+1, maxSize/(1024*1024))
+		}
+		totalSize += actualSize
+		if totalSize > maxSize {
+			return nil, fmt.Errorf("attachments exceed total size limit of %dMB", maxSize/(1024*1024))
+		}
+		decoded[i] = data
+	}
+	return decoded, nil
 }

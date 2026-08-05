@@ -6,7 +6,7 @@ import (
 )
 
 // GetMaxFileSize returns the maximum file upload size in bytes.
-// Default is 50MB, can be configured via MAX_FILE_SIZE_MB environment variable.
+// Default is 100MB, can be configured via MAX_FILE_SIZE_MB environment variable.
 //
 // MAX_FILE_SIZE_MB is intentionally a deploy-time-only knob (NOT a
 // runtime system_setting). The effective upload limit is gated by
@@ -15,9 +15,9 @@ import (
 //   - frontend client-side check via window.__RUNTIME_CONFIG__
 //
 // The DocReader transport has a separate 101 MiB default controlled by
-// DOCREADER_GRPC_MAX_FILE_SIZE_MB so Git sync can accept larger files without
-// widening browser and manual-upload entry points. The extra 1 MiB covers
-// protobuf framing for the 100 MiB Git file limit.
+// DOCREADER_GRPC_MAX_FILE_SIZE_MB. The extra 1 MiB covers protobuf framing for
+// 100 MiB manual uploads and Git files without coupling transport capacity to
+// the upload authorization limit.
 //
 // Surfacing a SystemAdmin UI knob whose effect is silently capped by
 // any of the above would mislead operators ("I raised it to 200MB but
@@ -30,7 +30,7 @@ func GetMaxFileSize() int64 {
 			return size * 1024 * 1024
 		}
 	}
-	return 50 * 1024 * 1024 // default 50MB
+	return 100 * 1024 * 1024 // default 100MB
 }
 
 // GetMaxFileSizeMB returns the maximum file upload size in MB. Same
@@ -41,5 +41,5 @@ func GetMaxFileSizeMB() int64 {
 			return size
 		}
 	}
-	return 50 // default 50MB
+	return 100 // default 100MB
 }
