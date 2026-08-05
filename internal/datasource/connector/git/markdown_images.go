@@ -340,24 +340,34 @@ func isListItemImageContinuation(markdown string, lineStart int, line string) bo
 	case strings.HasPrefix(line, "    "):
 		content = line[4:]
 	}
-	// Only exempt one indentation level that contains an image immediately
-	// below a list item. Deeper indentation remains an indented code block.
+	// Only exempt one indentation level that contains an image below a list
+	// item. Deeper indentation remains an indented code block.
 	if !strings.HasPrefix(content, "![") || strings.HasPrefix(content, "\t") ||
 		strings.HasPrefix(content, "    ") || lineStart == 0 {
 		return false
 	}
 
-	previousEnd := lineStart - 1
-	if previousEnd > 0 && markdown[previousEnd-1] == '\r' {
-		previousEnd--
+	// A blank line is valid inside a loose Markdown list item, so walk back to
+	// the nearest non-blank line before deciding whether this is list content.
+	for cursor := lineStart; cursor > 0; {
+		previousEnd := cursor - 1
+		if previousEnd > 0 && markdown[previousEnd-1] == '\r' {
+			previousEnd--
+		}
+		previousStart := strings.LastIndexByte(markdown[:previousEnd], '\n') + 1
+		previousLine := markdown[previousStart:previousEnd]
+		if strings.TrimSpace(previousLine) == "" {
+			cursor = previousStart
+			continue
+		}
+
+		indent := 0
+		for indent < len(previousLine) && indent < 3 && previousLine[indent] == ' ' {
+			indent++
+		}
+		return markdownListMarkerLength(previousLine[indent:]) > 0
 	}
-	previousStart := strings.LastIndexByte(markdown[:previousEnd], '\n') + 1
-	previousLine := markdown[previousStart:previousEnd]
-	indent := 0
-	for indent < len(previousLine) && indent < 3 && previousLine[indent] == ' ' {
-		indent++
-	}
-	return markdownListMarkerLength(previousLine[indent:]) > 0
+	return false
 }
 
 func stripMarkdownContainerPrefix(line string) (string, int) {

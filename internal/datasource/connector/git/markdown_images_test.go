@@ -69,7 +69,7 @@ func TestConnectorEmbedsImageIndentedUnderListItem(t *testing.T) {
 		files: map[string]fakeGitFile{
 			documentPath: {
 				blob:    "blob-doc",
-				content: "1. 点击页面右上角头像，选择「个人访问令牌」。\n\t![](../../../" + imagePath + ")",
+				content: "1. 点击页面右上角头像，选择「个人访问令牌」。\n\n\t![](../../../" + imagePath + ")",
 			},
 			imagePath: {blob: "blob-image", content: image},
 		},
