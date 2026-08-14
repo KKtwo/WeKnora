@@ -3,10 +3,12 @@ package chatpipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/searchutil"
@@ -15,15 +17,19 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+const defaultRerankStageTimeout = 8 * time.Second
+
 // PluginRerank implements reranking functionality for chat pipeline
 type PluginRerank struct {
 	modelService interfaces.ModelService // Service to access rerank models
+	stageTimeout time.Duration
 }
 
 // NewPluginRerank creates a new rerank plugin instance
 func NewPluginRerank(eventManager *EventManager, modelService interfaces.ModelService) *PluginRerank {
 	res := &PluginRerank{
 		modelService: modelService,
+		stageTimeout: defaultRerankStageTimeout,
 	}
 	eventManager.Register(res)
 	return res
@@ -122,23 +128,39 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 
 	// Only call rerank model if there are candidates
 	if len(candidatesToRerank) > 0 {
+		stageTimeout := p.stageTimeout
+		if stageTimeout <= 0 {
+			stageTimeout = defaultRerankStageTimeout
+		}
+		// Share one budget across the initial call and the optional threshold retry.
+		// The child deadline must fire before the request context so raw retrieval
+		// results can still flow through Merge when the reranker is slow.
+		rerankStageCtx, cancelRerankStage := context.WithTimeout(ctx, stageTimeout)
+		defer cancelRerankStage()
+
 		// Single rerank call with RewriteQuery, use threshold degradation if no results
 		originalThreshold := chatManage.RerankThreshold
 		var rerankErr error
-		rerankResp, rerankErr = p.rerank(ctx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
+		rerankResp, rerankErr = p.rerank(rerankStageCtx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
 
 		if rerankErr != nil {
 			// Rerank API failed — fallback to original retrieval results so the
 			// pipeline can still return something useful to the caller.
+			fallbackReason := rerankFallbackReason(ctx, rerankErr)
+			degraded := ctx.Err() == nil
 			pipelineWarn(ctx, "Rerank", "api_error_fallback", map[string]interface{}{
 				"error":         rerankErr.Error(),
 				"candidate_cnt": len(candidatesToRerank),
+				"reason":        fallbackReason,
+				"degraded":      degraded,
 			})
 			chatManage.SearchResult = candidatesToRerank
 			spanOutput = map[string]interface{}{
 				"stage":           "api_error_fallback",
 				"candidate_count": len(candidatesToRerank),
 				"error":           rerankErr.Error(),
+				"reason":          fallbackReason,
+				"degraded":        degraded,
 			}
 			return next()
 		}
@@ -158,13 +180,17 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 				"reason":        "no results above original threshold, retrying with lower threshold",
 			})
 			chatManage.RerankThreshold = degradedThreshold
-			rerankResp, rerankErr = p.rerank(ctx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
+			rerankResp, rerankErr = p.rerank(rerankStageCtx, chatManage, rerankModel, chatManage.RewriteQuery, passages, candidatesToRerank)
 			// Restore original threshold
 			chatManage.RerankThreshold = originalThreshold
 			if rerankErr != nil {
+				fallbackReason := rerankFallbackReason(ctx, rerankErr)
+				degraded := ctx.Err() == nil
 				pipelineWarn(ctx, "Rerank", "api_error_fallback", map[string]interface{}{
 					"error":         rerankErr.Error(),
 					"candidate_cnt": len(candidatesToRerank),
+					"reason":        fallbackReason,
+					"degraded":      degraded,
 				})
 				chatManage.SearchResult = candidatesToRerank
 				spanOutput = map[string]interface{}{
@@ -172,6 +198,8 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 					"candidate_count":    len(candidatesToRerank),
 					"threshold_degraded": thresholdDegraded,
 					"error":              rerankErr.Error(),
+					"reason":             fallbackReason,
+					"degraded":           degraded,
 				}
 				return next()
 			}
@@ -263,6 +291,16 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 		"filtered_cnt": len(chatManage.RerankResult),
 	})
 	return next()
+}
+
+func rerankFallbackReason(parentCtx context.Context, err error) string {
+	if parentCtx.Err() != nil {
+		return "request_cancelled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "stage_timeout"
+	}
+	return "api_error"
 }
 
 func buildRerankSpanOutput(
